@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from bpop import (
     BPOP,
@@ -27,6 +27,15 @@ from bpop import (
 from bpop.result import BPOPResult
 from ingest.trace_schema import TraceEvent
 from profiler import run_pipeline
+from rawdata_gen import generate_configured
+from rawdata_gen.agents.common import to_jsonl
+
+
+class GenerateRequest(BaseModel):
+    agent_count: int
+    actions_per_agent: list[int]
+    total_lines: int | None = None
+
 
 app = FastAPI(
     title="B-POP Solver API",
@@ -127,6 +136,27 @@ async def analyze(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/generate")
+def generate(req: GenerateRequest) -> dict:
+    """Generate synthetic trace data (vendored from
+    ipintotech-lab/agents_profile_rawdata_gen) for the dashboard's
+    "generate sample data" path. Returns the same JSONL format /analyze
+    accepts as an upload, plus a summary."""
+    try:
+        runs = generate_configured(req.agent_count, req.actions_per_agent, req.total_lines)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "jsonl": to_jsonl(runs),
+        "num_events": sum(len(run.events) for run in runs),
+        "num_runs": len(runs),
+        "runs": [
+            {"run_id": run.run_id, "agent": run.agent, "workflow": run.workflow, "num_actions": len(run.events)}
+            for run in runs
+        ],
+    }
 
 
 @app.get("/examples/capacity-allocation")

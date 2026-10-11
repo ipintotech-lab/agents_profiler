@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4"]
+dev = ["pytest>=7.4", "httpx2>=2.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
