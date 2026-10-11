@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agents-profiler-bpop"
+version = "0.1.0"
+description = "B-POP (Bi-level Parametric Optimization) engine, applied to AI agent workflow trace data"
+requires-python = ">=3.10"
+dependencies = [
+    "ppopt>=1.6.0",
+    "pulp>=2.8,<3",  # pulp>=3 ships a Rust backend with a known variable-multiplication bug (as of pulp 4.0.0)
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
