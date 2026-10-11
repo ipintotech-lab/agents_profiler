@@ -141,6 +141,34 @@ def compute_default_formula(
     }
 
 
+def compute_formula_for_all_workflows(
+    events: list[TraceEvent],
+    capacity_headroom: float = 2.0,
+    demand_model: str = DEFAULT_DEMAND_MODEL,
+) -> dict[str, dict]:
+    """``compute_default_formula`` for every workflow present in ``events``,
+    not just the one selected for the B-POP solve -- so provenance,
+    usage_stats, and demand-model-derived values can be compared across
+    workflows instead of only ever being visible for whichever workflow
+    happens to be selected.
+
+    A workflow with no LLM-call events (so ``compute_default_formula``
+    can't derive ``unit_cost``/``max_demand`` for it) is reported with an
+    ``"error"`` key instead of raising, so one unprofilable workflow
+    doesn't hide the others' results.
+    """
+    workflows = sorted({e.workflow for e in events if e.workflow})
+    per_workflow: dict[str, dict] = {}
+    for wf in workflows:
+        try:
+            per_workflow[wf] = compute_default_formula(
+                events, wf, capacity_headroom=capacity_headroom, demand_model=demand_model
+            )
+        except ValueError as exc:
+            per_workflow[wf] = {"error": str(exc)}
+    return per_workflow
+
+
 def sensitivity_analysis(
     events: list[TraceEvent],
     workflow: str,

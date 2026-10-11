@@ -94,6 +94,7 @@
   .genrow { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 14px; }
   .gensummary { color: var(--dim); font-size: 12px; margin-top: 10px; }
   .gensummary .ok { color: var(--green); }
+  .gensummary .err-text { color: var(--red); }
   footer { margin-top: 60px; border-top: 1px solid var(--line); padding-top: 18px; color: var(--faint); font-size: 11px; }
   #report { display: none; }
   [hidden] { display: none !important; }
@@ -178,8 +179,10 @@
       <div class="row" style="margin-bottom:0">
         <button type="button" class="ghost" id="generateBtn">Generate data</button>
         <button type="button" class="ghost" id="downloadBtn" disabled>Download JSON</button>
+        <button type="button" class="ghost" id="validateSeedBtn" disabled>Validate seed</button>
       </div>
       <div class="gensummary" id="genSummary"></div>
+      <div class="gensummary" id="validateSummary"></div>
     </div>
 
     <div class="row" style="margin-top:14px">
@@ -230,6 +233,9 @@
     <div class="stats" id="profileStats"></div>
     <pre class="code" id="profileExplanation"></pre>
     <pre class="code" id="capacityContext"></pre>
+
+    <p class="lede" style="margin-top:14px">Provenance checks across every workflow in the upload, not just the one selected above — lets you compare DERIVED values at a glance.</p>
+    <table id="perWorkflowTable"><thead><tr><th>Workflow</th><th>unit_cost</th><th>max_demand (demand_model)</th><th>runs observed</th></tr></thead><tbody></tbody></table>
 
     <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Sensitivity — unit_value / unit_cost ratio</h3>
     <p class="lede">unit_value is ASSUMED, not observed — this shows how the leader/follower optimum moves if that assumption changes, instead of presenting one ratio's result as certain.</p>
@@ -342,14 +348,55 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
     genSummaryEl.innerHTML = `<span class="ok">Generated ${data.num_events} events across ${data.num_runs} runs.</span> ` +
       `Ready to run the pipeline. <span class="hint">seed=${data.seed} · dataset_id=${esc(data.dataset_id)}</span>`;
     downloadBtn.disabled = false;
+    validateSeedBtn.disabled = false;
+    validateSummaryEl.innerHTML = '';
   } catch (e) {
     generatedBlob = null;
     downloadBtn.disabled = true;
+    validateSeedBtn.disabled = true;
     showErr(e.message || String(e));
   } finally {
     genBtn.disabled = false;
     genBtn.textContent = 'Generate data';
     updateRunBtnState();
+  }
+});
+
+const validateSeedBtn = document.getElementById('validateSeedBtn');
+const validateSummaryEl = document.getElementById('validateSummary');
+validateSeedBtn.addEventListener('click', async () => {
+  if (!generatedSummary) return;
+  errEl.style.display = 'none';
+  validateSeedBtn.disabled = true;
+  validateSeedBtn.textContent = 'Validating…';
+  try {
+    const body = {
+      agent_count: generatedSummary.runs.length ? new Set(generatedSummary.runs.map(r => r.agent)).size : 1,
+      actions_per_agent: [],
+      seed: generatedSummary.seed,
+    };
+    // re-derive the exact generation params from the last successful /generate
+    // call's inputs rather than its output, so the regenerated dataset is an
+    // apples-to-apples reproducibility check, not a reshaped comparison.
+    const agentCount = parseInt(agentCountEl.value, 10);
+    body.agent_count = agentCount;
+    body.actions_per_agent = [1, 2, 3].slice(0, agentCount).map(i => parseInt(document.getElementById(`actions${i}`).value, 10));
+    const totalLinesRaw = document.getElementById('totalLines').value;
+    if (totalLinesRaw !== '') body.total_lines = parseInt(totalLinesRaw, 10);
+    body.variance = document.getElementById('variance').value;
+
+    const res = await fetch('/validate_seed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Validation failed.');
+    validateSummaryEl.innerHTML = data.reproducible
+      ? `<span class="ok">Seed ${data.seed} is reproducible</span> — regenerating twice produced byte-identical output ` +
+        `(${data.num_events} events). <span class="hint">sha256=${esc(data.jsonl_sha256.slice(0, 16))}…</span>`
+      : `<span class="err-text">Seed ${data.seed} is NOT reproducible</span> — two regenerations with the same seed diverged.`;
+  } catch (e) {
+    showErr(e.message || String(e));
+  } finally {
+    validateSeedBtn.disabled = false;
+    validateSeedBtn.textContent = 'Validate seed';
   }
 });
 
@@ -376,6 +423,8 @@ generatePanel.addEventListener('input', () => {
     generatedSummary = null;
     genSummaryEl.innerHTML = '';
     downloadBtn.disabled = true;
+    validateSeedBtn.disabled = true;
+    validateSummaryEl.innerHTML = '';
   }
   updateRunBtnState();
 });
@@ -385,6 +434,8 @@ generatePanel.addEventListener('change', () => {
     generatedSummary = null;
     genSummaryEl.innerHTML = '';
     downloadBtn.disabled = true;
+    validateSeedBtn.disabled = true;
+    validateSummaryEl.innerHTML = '';
   }
   updateRunBtnState();
 });
@@ -500,6 +551,20 @@ function render(data) {
     return `<tr><td>${key}</td><td class="num">${value}</td>` +
       `<td><span class="pill ${info.label.toLowerCase()}">${info.label}</span></td>` +
       `<td>${esc(info.note)}</td></tr>`;
+  }).join('');
+
+  // Per-workflow provenance: same DERIVED unit_cost/max_demand, computed
+  // independently for every workflow in the upload, not just the one
+  // selected above -- a workflow with no LLM-call events shows its error
+  // instead of silently being left out.
+  const perWf = data.formula.per_workflow || {};
+  document.querySelector('#perWorkflowTable tbody').innerHTML = Object.entries(perWf).map(([wf, info]) => {
+    if (info.error) {
+      return `<tr><td>${esc(wf)}</td><td colspan="3"><span class="hint">${esc(info.error)}</span></td></tr>`;
+    }
+    return `<tr><td>${esc(wf)}</td><td class="num">${info.unit_cost.toFixed(6)}</td>` +
+      `<td class="num">${info.max_demand.toFixed(3)} (${esc(info.demand_model)})</td>` +
+      `<td class="num">${info.usage_stats.count}</td></tr>`;
   }).join('');
 
   // Sensitivity sweep across unit_value/unit_cost ratios

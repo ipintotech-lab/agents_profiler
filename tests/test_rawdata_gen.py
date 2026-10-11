@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from api.main import app
 from ingest.trace_schema import TraceEvent
-from rawdata_gen import generate_configured
+from rawdata_gen import generate_configured, verify_seed_reproducibility
 from rawdata_gen.agents.common import to_jsonl
 
 
@@ -176,4 +176,45 @@ def test_analyze_endpoint_rejects_invalid_demand_model():
         files={"file": ("generated.jsonl", gen["jsonl"], "application/x-ndjson")},
         data={"demand_model": "p999"},
     )
+    assert resp.status_code == 400
+
+
+def test_verify_seed_reproducibility_true_for_matching_seed():
+    result = verify_seed_reproducibility(2, [4, 6], 40, "mid", seed=12345)
+    assert result["seed"] == 12345
+    assert result["reproducible"] is True
+    assert result["num_events"] == 40
+    assert isinstance(result["jsonl_sha256"], str) and len(result["jsonl_sha256"]) == 64
+
+
+def test_verify_seed_reproducibility_fingerprint_differs_across_seeds():
+    result_a = verify_seed_reproducibility(1, [4], None, "mid", seed=1)
+    result_b = verify_seed_reproducibility(1, [4], None, "mid", seed=2)
+    assert result_a["jsonl_sha256"] != result_b["jsonl_sha256"]
+
+
+def test_validate_seed_endpoint_confirms_reproducibility():
+    client = TestClient(app)
+    resp = client.post(
+        "/validate_seed",
+        json={"agent_count": 2, "actions_per_agent": [4, 6], "total_lines": 40, "seed": 99},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["seed"] == 99
+    assert data["reproducible"] is True
+
+
+def test_validate_seed_endpoint_resolves_a_seed_when_none_given():
+    client = TestClient(app)
+    resp = client.post("/validate_seed", json={"agent_count": 1, "actions_per_agent": [4]})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data["seed"], int)
+    assert data["reproducible"] is True
+
+
+def test_validate_seed_endpoint_rejects_bad_action_count():
+    client = TestClient(app)
+    resp = client.post("/validate_seed", json={"agent_count": 1, "actions_per_agent": [2], "seed": 1})
     assert resp.status_code == 400

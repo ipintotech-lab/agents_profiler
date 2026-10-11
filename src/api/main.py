@@ -29,7 +29,7 @@ from bpop.result import BPOPResult
 from ingest import DEFAULT_DEMAND_MODEL
 from ingest.trace_schema import TraceEvent
 from profiler import run_pipeline
-from rawdata_gen import generate_configured
+from rawdata_gen import generate_configured, verify_seed_reproducibility
 from rawdata_gen.agents.common import to_jsonl
 from rawdata_gen.generate_traces import build_dataset_manifest
 
@@ -183,6 +183,22 @@ def generate(req: GenerateRequest) -> dict:
         ],
         **build_dataset_manifest(runs, seed=seed),
     }
+
+
+@app.post("/validate_seed")
+def validate_seed(req: GenerateRequest) -> dict:
+    """Regenerate the requested dataset twice from the same seed (a fresh
+    ``seed`` is resolved and reported if none was given) and confirm the
+    output is byte-identical -- direct evidence that the seed actually
+    reproduces its dataset, instead of assuming reproducibility because
+    the code merely accepts a seed parameter."""
+    seed = req.seed if req.seed is not None else random.SystemRandom().randrange(2**32)
+    try:
+        return verify_seed_reproducibility(
+            req.agent_count, req.actions_per_agent, req.total_lines, req.variance, seed
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/examples/capacity-allocation")

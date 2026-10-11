@@ -3,6 +3,7 @@ from .to_bpop_problem import (
     DEMAND_MODELS,
     build_capacity_problem_from_traces,
     compute_default_formula,
+    compute_formula_for_all_workflows,
     sensitivity_analysis,
     usage_statistics,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "TraceEvent",
     "build_capacity_problem_from_traces",
     "compute_default_formula",
+    "compute_formula_for_all_workflows",
     "sensitivity_analysis",
     "usage_statistics",
 ]

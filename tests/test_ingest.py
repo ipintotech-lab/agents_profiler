@@ -6,9 +6,11 @@ from bpop import BPOP
 from ingest import (
     build_capacity_problem_from_traces,
     compute_default_formula,
+    compute_formula_for_all_workflows,
     sensitivity_analysis,
 )
 from ingest.loader import load_traces
+from ingest.trace_schema import TraceEvent
 
 DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "sample_traces.jsonl"
 
@@ -80,3 +82,48 @@ def test_sensitivity_analysis_sweeps_value_cost_ratios():
     # negative is better here, since the upper problem minimizes cost - value).
     objectives = [r["objective"] for r in results]
     assert objectives[-1] <= objectives[0] + 1e-9
+
+
+def _llm_event(**overrides) -> TraceEvent:
+    base = {
+        "trace_id": "t1",
+        "agent": "agent-a",
+        "workflow": "wf-a",
+        "run_id": "r1",
+        "event_type": "llm_call",
+        "node": "step",
+        "input_state": {"k": "v"},
+        "result": "success",
+        "cost": 0.01,
+        "latency_ms": 100,
+        "model": "demo-llm",
+    }
+    base.update(overrides)
+    return TraceEvent.model_validate(base)
+
+
+def test_compute_formula_for_all_workflows_covers_every_workflow_present():
+    events = [
+        _llm_event(workflow="wf-a", run_id="r1", cost=0.01),
+        _llm_event(workflow="wf-a", run_id="r2", cost=0.02),
+        _llm_event(workflow="wf-b", run_id="r3", cost=0.05),
+        _llm_event(workflow="wf-b", run_id="r4", cost=0.07),
+    ]
+    per_workflow = compute_formula_for_all_workflows(events)
+
+    assert set(per_workflow) == {"wf-a", "wf-b"}
+    assert per_workflow["wf-a"]["unit_cost"] == pytest.approx(0.015)
+    assert per_workflow["wf-b"]["unit_cost"] == pytest.approx(0.06)
+    assert "provenance" in per_workflow["wf-a"]
+    assert "usage_stats" in per_workflow["wf-b"]
+
+
+def test_compute_formula_for_all_workflows_reports_error_for_workflow_without_llm_calls():
+    events = [
+        _llm_event(workflow="wf-a", event_type="llm_call"),
+        _llm_event(workflow="wf-b", event_type="tool_call", model=None),
+    ]
+    per_workflow = compute_formula_for_all_workflows(events)
+
+    assert "provenance" in per_workflow["wf-a"]
+    assert "error" in per_workflow["wf-b"]

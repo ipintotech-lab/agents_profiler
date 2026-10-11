@@ -13,6 +13,7 @@ from ingest import (
     DEFAULT_DEMAND_MODEL,
     build_capacity_problem_from_traces,
     compute_default_formula,
+    compute_formula_for_all_workflows,
     sensitivity_analysis,
 )
 from ingest.trace_schema import TraceEvent
@@ -66,6 +67,9 @@ def run_pipeline(
 
     formula_defaults = compute_default_formula(
         events, selected_workflow, capacity_headroom=capacity_headroom, demand_model=demand_model
+    )
+    formula_by_workflow = compute_formula_for_all_workflows(
+        events, capacity_headroom=capacity_headroom, demand_model=demand_model
     )
     formula_used = {
         "unit_cost": unit_cost if unit_cost is not None else formula_defaults["unit_cost"],
@@ -151,7 +155,7 @@ def run_pipeline(
 
     report = {
         "observe": {**observed, "selected_workflow": selected_workflow},
-        "formula": {"used": formula_used, "defaults": formula_defaults},
+        "formula": {"used": formula_used, "defaults": formula_defaults, "per_workflow": formula_by_workflow},
         "profile": {**_serialize_bpop_result(bpop_result), "sensitivity": sensitivity},
         "mine": {"by_agent": agents_summary},
         "score": {

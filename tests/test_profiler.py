@@ -213,6 +213,18 @@ def test_run_pipeline_includes_sensitivity_sweep_in_profile():
     assert [s["ratio"] for s in sensitivity] == [1.0, 3.0]
 
 
+def test_run_pipeline_reports_formula_per_workflow():
+    events = load_traces(DATA_PATH)
+    report = run_pipeline(events)
+
+    per_workflow = report["formula"]["per_workflow"]
+    assert "cve-remediation-agent" in per_workflow
+    assert per_workflow["cve-remediation-agent"]["demand_model"] == report["formula"]["defaults"]["demand_model"]
+    # The fixture only has one workflow, but the selected workflow's
+    # per-workflow entry must line up with the top-level defaults exactly.
+    assert per_workflow["cve-remediation-agent"]["unit_cost"] == report["formula"]["defaults"]["unit_cost"]
+
+
 def test_run_pipeline_demand_model_changes_formula_defaults():
     events = load_traces(DATA_PATH)
     report_p95 = run_pipeline(events)

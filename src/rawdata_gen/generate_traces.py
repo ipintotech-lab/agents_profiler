@@ -1,11 +1,12 @@
 """Build configurable sets of mock-agent runs for the dashboard's
 "generate sample data" path."""
 import copy
+import hashlib
 import random
 import uuid
 from datetime import UTC, datetime
 
-from .agents.common import VARIANCES, Run
+from .agents.common import VARIANCES, Run, to_jsonl
 from .agents.cve_remediation import generate as generate_cve
 from .agents.deployment_incident import generate as generate_deployment
 from .agents.support_triage import generate as generate_support
@@ -87,6 +88,36 @@ def generate_configured(
             remaining -= len(run.events)
             runs.append(run)
     return runs
+
+
+def verify_seed_reproducibility(
+    agent_count: int,
+    actions_per_agent: list[int],
+    total_lines: int | None,
+    variance: str,
+    seed: int,
+) -> dict:
+    """Regenerate the same dataset twice from ``seed`` (via two fresh
+    ``random.Random(seed)`` instances, independent of whatever RNG state
+    the caller may already be holding) and confirm the resulting JSONL is
+    byte-identical -- direct, re-checkable evidence that a seed actually
+    reproduces its dataset, rather than assuming it does because the code
+    merely accepts one.
+
+    Returns ``reproducible`` plus a sha256 fingerprint of the generated
+    JSONL, so a caller can also compare two *separate* validation calls
+    (e.g. across a deploy) without re-diffing the full content.
+    """
+    runs_a = generate_configured(agent_count, actions_per_agent, total_lines, rng=random.Random(seed), variance=variance)
+    runs_b = generate_configured(agent_count, actions_per_agent, total_lines, rng=random.Random(seed), variance=variance)
+    jsonl_a = to_jsonl(runs_a)
+    jsonl_b = to_jsonl(runs_b)
+    return {
+        "seed": seed,
+        "reproducible": jsonl_a == jsonl_b,
+        "jsonl_sha256": hashlib.sha256(jsonl_a.encode("utf-8")).hexdigest(),
+        "num_events": sum(len(run.events) for run in runs_a),
+    }
 
 
 def build_dataset_manifest(runs: list[Run], seed: int | None = None) -> dict:
