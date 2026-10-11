@@ -1,14 +1,19 @@
-"""Minimal HTTP service exposing the B-POP solver.
+"""HTTP service exposing the B-POP solver, plus a small test-environment
+UI that runs uploaded trace files through the full
+Observe -> Profile -> Mine -> Score -> Recommend pipeline.
 
-Lets a caller POST a BilevelProblem definition and get back the
-leader/follower optimum with the full critical-region audit trail —
-the same thing ``examples/capacity_allocation_demo.py`` prints, over
-HTTP instead of stdout.
+The raw ``/solve`` endpoint lets a caller POST a BilevelProblem
+definition directly and get back the leader/follower optimum with the
+full critical-region audit trail; ``/analyze`` is the higher-level,
+trace-file-in / report-out path backing the UI at ``/``.
 """
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import RedirectResponse
+import json
+from pathlib import Path
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 from bpop import (
@@ -20,12 +25,16 @@ from bpop import (
     Variable,
 )
 from bpop.result import BPOPResult
+from ingest.trace_schema import TraceEvent
+from profiler import run_pipeline
 
 app = FastAPI(
     title="B-POP Solver API",
     description="Bi-level parametric optimization (leader/follower) solver prototype.",
     version="0.1.0",
 )
+
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 def _capacity_allocation_demo_problem() -> BilevelProblem:
@@ -72,13 +81,52 @@ def _serialize_result(result: BPOPResult) -> dict:
 
 
 @app.get("/", include_in_schema=False)
-def root() -> RedirectResponse:
-    return RedirectResponse(url="/docs")
+def root() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "index.html")
 
 
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+def _parse_trace_events(raw: bytes) -> list[TraceEvent]:
+    text = raw.decode("utf-8")
+    stripped = text.strip()
+    if not stripped:
+        raise HTTPException(status_code=400, detail="uploaded file is empty")
+    try:
+        if stripped.startswith("["):
+            rows = json.loads(stripped)
+        else:
+            rows = [json.loads(line) for line in stripped.splitlines() if line.strip()]
+        return [TraceEvent.model_validate(row) for row in rows]
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise HTTPException(status_code=422, detail=f"could not parse trace file: {exc}") from exc
+
+
+@app.post("/analyze")
+async def analyze(
+    file: UploadFile = File(...),  # noqa: B008
+    workflow: str | None = Form(None),
+    unit_cost: float | None = Form(None),
+    unit_value: float | None = Form(None),
+    capacity_headroom: float = Form(2.0),
+) -> dict:
+    """Run the uploaded trace file through Observe -> Profile -> Mine ->
+    Score -> Recommend for one workflow (auto-picked if not given)."""
+    raw = await file.read()
+    events = _parse_trace_events(raw)
+    try:
+        return run_pipeline(
+            events,
+            workflow=workflow or None,
+            unit_cost=unit_cost,
+            unit_value=unit_value,
+            capacity_headroom=capacity_headroom,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/examples/capacity-allocation")
