@@ -8,6 +8,27 @@ data-ingestion layer that builds B-POP problems from AI-agent-workflow
 trace rows (the normalized trace schema from
 `AI_Agent_Profiler_Product_Technical_Design_Review.docx`).
 
+## Scope — what this is, and isn't
+
+This repo is the **B-POP optimizer and one example ingestion path**, nothing
+more. It is **not** an implementation of the "AI Agent Profiler" product
+described in `AI_Agent_Profiler_Product_Technical_Design_Review.docx` — that
+design covers a much larger system (OTLP trace collection, flow
+reconstruction, cost attribution, determinism scoring, recommendation
+generation, replay/shadow execution, privacy controls) that does not exist
+here. The only thing borrowed from that doc is its §7 trace schema, used as
+the input shape for `src/ingest/`. Concretely, this repo currently has:
+
+- a working leader/follower B-POP solver (`src/bpop/`), validated against
+  one hand-specified problem (the doc3 capacity-allocation experiment);
+- a small ingestion function that maps JSONL trace rows into *that same*
+  capacity-allocation problem shape, using one assumption (`value_per_used_call`,
+  defaulting to 2x observed cost per call) that is not derived from traces;
+- a thin FastAPI wrapper (`src/api/`) so the solver is reachable over HTTP.
+
+It has no trace collector, no UI, no cost/determinism dashboards, and no
+recommendation engine.
+
 ## Architecture
 
 - `src/bpop/problem.py` — typed bi-level problem model (`BilevelProblem`,
@@ -26,6 +47,8 @@ trace rows (the normalized trace schema from
   and maps them into a capacity-allocation `BilevelProblem` (leader =
   capacity allocated per run, follower = capacity actually used, estimated
   from observed LLM-call counts and cost).
+- `src/api/` — a thin FastAPI wrapper (`/health`, `/solve`,
+  `/examples/capacity-allocation`) exposing `BPOP.solve` over HTTP.
 
 ## Usage
 
@@ -79,11 +102,24 @@ PYTHONPATH=src python3 examples/agent_workflow_demo.py
 pytest
 ```
 
-## Status (Phase 1 MVP per the proposal's roadmap)
+Or as an HTTP service:
+
+```bash
+PYTHONPATH=src uvicorn api.main:app --reload
+curl localhost:8000/examples/capacity-allocation
+```
+
+Deployed on Railway at the project's service URL (`railpack.json` sets the
+start command; `requirements.txt` lists runtime deps directly, since
+Railpack's installer only recognizes `requirements.txt`/lockfiles, not a
+bare `pyproject.toml`).
+
+## Status (B-POP solver: Phase 1 / B-LP, per the B-POP proposal's own roadmap)
 
 Implements basic B-LP using PPOPT + PuLP, no AI in the core, validated against
 the proposal's acceptance-gate experiment (`tests/test_capacity_allocation.py`):
 x\*=6, y\*=6, F\*=-12, two critical regions `[0,6]` and `[6,10]`, explicit
 solutions `y*(x)=x` / `y*(x)=6`, boundary-tie handling at x=6, and a fully
-explainable result. B-QP / B-MILP / B-MIQP (later phases) are not yet
-implemented.
+explainable result. B-QP / B-MILP / B-MIQP (later B-POP phases) are not yet
+implemented — and, per the Scope section above, neither is the broader AI
+Agent Profiler product.
