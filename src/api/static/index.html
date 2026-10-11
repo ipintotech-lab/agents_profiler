@@ -169,6 +169,7 @@
       </div>
       <div class="row" style="margin-bottom:0">
         <button type="button" class="ghost" id="generateBtn">Generate data</button>
+        <button type="button" class="ghost" id="downloadBtn" disabled>Download JSON</button>
       </div>
       <div class="gensummary" id="genSummary"></div>
     </div>
@@ -309,14 +310,31 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
     generatedBlob = new Blob([data.jsonl], { type: 'application/x-ndjson' });
     generatedSummary = data;
     genSummaryEl.innerHTML = `<span class="ok">Generated ${data.num_events} events across ${data.num_runs} runs.</span> Ready to run the pipeline.`;
+    downloadBtn.disabled = false;
   } catch (e) {
     generatedBlob = null;
+    downloadBtn.disabled = true;
     showErr(e.message || String(e));
   } finally {
     genBtn.disabled = false;
     genBtn.textContent = 'Generate data';
     updateRunBtnState();
   }
+});
+
+const downloadBtn = document.getElementById('downloadBtn');
+downloadBtn.addEventListener('click', () => {
+  if (!generatedSummary) return;
+  const events = generatedSummary.jsonl.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+  const blob = new Blob([JSON.stringify(events, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `rawdata-${generatedSummary.num_events}events-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 });
 
 // any change to the generation inputs invalidates the last generated batch,
@@ -326,6 +344,7 @@ generatePanel.addEventListener('input', () => {
     generatedBlob = null;
     generatedSummary = null;
     genSummaryEl.innerHTML = '';
+    downloadBtn.disabled = true;
   }
   updateRunBtnState();
 });
@@ -334,6 +353,7 @@ generatePanel.addEventListener('change', () => {
     generatedBlob = null;
     generatedSummary = null;
     genSummaryEl.innerHTML = '';
+    downloadBtn.disabled = true;
   }
   updateRunBtnState();
 });
