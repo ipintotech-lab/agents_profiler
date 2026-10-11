@@ -1,6 +1,7 @@
 """Build configurable sets of mock-agent runs for the dashboard's
 "generate sample data" path."""
 import copy
+import random
 
 from .agents.common import Run
 from .agents.cve_remediation import generate as generate_cve
@@ -10,9 +11,10 @@ from .agents.support_triage import generate as generate_support
 AGENT_GENERATORS = [generate_cve, generate_support, generate_deployment]
 
 
-def _build_run(generator, action_count: int, run_id: str) -> Run:
-    """Clone a generator's first run, resized to exactly ``action_count`` events."""
-    template = generator()[0]
+def _build_run(generator, action_count: int, run_id: str, rng: random.Random) -> Run:
+    """Clone a freshly-randomized run from ``generator``, resized to exactly
+    ``action_count`` events."""
+    template = generator(rng)[0]
     template.run_id = run_id
     template.trace_id = f"trace-{run_id}"
     template.events = template.events[:action_count]
@@ -28,12 +30,20 @@ def _build_run(generator, action_count: int, run_id: str) -> Run:
     return template
 
 
-def generate_configured(agent_count: int, actions_per_agent: list[int], total_lines: int | None = None) -> list[Run]:
+def generate_configured(
+    agent_count: int,
+    actions_per_agent: list[int],
+    total_lines: int | None = None,
+    rng: random.Random | None = None,
+) -> list[Run]:
     """Create runs for the selected agents with the requested action counts.
 
     Without ``total_lines`` one run per agent is created. With it, runs are
     repeated round-robin across the agents until exactly ``total_lines``
-    events exist; the final run is truncated if needed.
+    events exist; the final run is truncated if needed. Field values
+    (severities, categories, costs, latencies, etc.) are randomized on every
+    call, so repeated generation with the same parameters produces different
+    data.
     """
     if not 1 <= agent_count <= len(AGENT_GENERATORS):
         raise ValueError(f"agent_count must be between 1 and {len(AGENT_GENERATORS)}")
@@ -41,13 +51,14 @@ def generate_configured(agent_count: int, actions_per_agent: list[int], total_li
         raise ValueError("provide exactly one action count per agent")
     if any(not 4 <= count <= 20 for count in actions_per_agent):
         raise ValueError("each action count must be between 4 and 20")
-    if total_lines is not None and total_lines < 1:
-        raise ValueError("total_lines must be at least 1")
+    if total_lines is not None and (total_lines < 20 or total_lines % 20 != 0):
+        raise ValueError("total_lines must be a positive multiple of 20")
 
+    rng = rng or random.Random()
     agents = list(zip(AGENT_GENERATORS, actions_per_agent))
     if total_lines is None:
         return [
-            _build_run(generator, action_count, f"custom-{index:02d}")
+            _build_run(generator, action_count, f"custom-{index:02d}", rng)
             for index, (generator, action_count) in enumerate(agents, 1)
         ]
 
@@ -59,7 +70,7 @@ def generate_configured(agent_count: int, actions_per_agent: list[int], total_li
         for index, (generator, action_count) in enumerate(agents, 1):
             if remaining <= 0:
                 break
-            run = _build_run(generator, action_count, f"custom-{index:02d}-{cycle:04d}")
+            run = _build_run(generator, action_count, f"custom-{index:02d}-{cycle:04d}", rng)
             run.events = run.events[:remaining]
             remaining -= len(run.events)
             runs.append(run)

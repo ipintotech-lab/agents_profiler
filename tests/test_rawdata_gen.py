@@ -17,9 +17,9 @@ def test_generate_configured_one_run_per_agent_without_total_lines():
 
 
 def test_generate_configured_respects_total_lines_round_robin():
-    runs = generate_configured(2, [4, 6], total_lines=25)
+    runs = generate_configured(2, [4, 6], total_lines=40)
     total = sum(len(r.events) for r in runs)
-    assert total == 25
+    assert total == 40
 
 
 def test_generate_configured_rejects_out_of_range_action_count():
@@ -34,21 +34,34 @@ def test_generate_configured_allows_up_to_twenty_actions():
     assert len(runs[0].events) == 20
 
 
+def test_generate_configured_rejects_total_lines_not_multiple_of_twenty():
+    with pytest.raises(ValueError):
+        generate_configured(1, [4], total_lines=25)
+    with pytest.raises(ValueError):
+        generate_configured(1, [4], total_lines=10)
+
+
+def test_generate_configured_is_random_across_calls():
+    jsonl_a = to_jsonl(generate_configured(3, [4, 5, 7], total_lines=20))
+    jsonl_b = to_jsonl(generate_configured(3, [4, 5, 7], total_lines=20))
+    assert jsonl_a != jsonl_b
+
+
 def test_generated_events_validate_against_trace_schema():
-    runs = generate_configured(3, [4, 4, 4], total_lines=12)
+    runs = generate_configured(3, [4, 4, 4], total_lines=20)
     jsonl = to_jsonl(runs)
     events = [TraceEvent.model_validate(json.loads(line)) for line in jsonl.splitlines()]
-    assert len(events) == 12
+    assert len(events) == 20
 
 
 def test_generate_endpoint_returns_valid_jsonl():
     client = TestClient(app)
-    resp = client.post("/generate", json={"agent_count": 2, "actions_per_agent": [4, 6], "total_lines": 25})
+    resp = client.post("/generate", json={"agent_count": 2, "actions_per_agent": [4, 6], "total_lines": 40})
     assert resp.status_code == 200
     data = resp.json()
-    assert data["num_events"] == 25
+    assert data["num_events"] == 40
     lines = data["jsonl"].splitlines()
-    assert len(lines) == 25
+    assert len(lines) == 40
     json.loads(lines[0])
 
 
