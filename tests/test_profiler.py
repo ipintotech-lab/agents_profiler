@@ -191,3 +191,33 @@ def test_run_pipeline_with_ground_truth_adds_validation_section():
     assert validation["insufficient_evidence_nodes"] == 1
     assert validation["classified_nodes"] == 0
     assert validation["precision"] is None
+
+
+def test_run_pipeline_reports_capacity_context_separately_from_score():
+    events = load_traces(DATA_PATH)
+    report = run_pipeline(events)
+
+    assert "capacity_context" in report
+    assert report["observe"]["selected_workflow"] in report["capacity_context"]
+    # The architectural decision (B-POP stays decoupled from per-node
+    # scoring) must hold: no recommendation dict carries any B-POP field.
+    for rec in report["recommend"]:
+        assert "x" not in rec and "y" not in rec and "objective" not in rec
+
+
+def test_run_pipeline_includes_sensitivity_sweep_in_profile():
+    events = load_traces(DATA_PATH)
+    report = run_pipeline(events, sensitivity_ratios=[1.0, 3.0])
+
+    sensitivity = report["profile"]["sensitivity"]
+    assert [s["ratio"] for s in sensitivity] == [1.0, 3.0]
+
+
+def test_run_pipeline_demand_model_changes_formula_defaults():
+    events = load_traces(DATA_PATH)
+    report_p95 = run_pipeline(events)
+    report_max = run_pipeline(events, demand_model="max")
+
+    assert report_p95["formula"]["defaults"]["demand_model"] == "p95"
+    assert report_max["formula"]["defaults"]["demand_model"] == "max"
+    assert report_p95["formula"]["defaults"]["max_demand"] < report_max["formula"]["defaults"]["max_demand"]

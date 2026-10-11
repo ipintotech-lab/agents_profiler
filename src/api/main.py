@@ -10,6 +10,7 @@ trace-file-in / report-out path backing the UI at ``/``.
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -25,6 +26,7 @@ from bpop import (
     Variable,
 )
 from bpop.result import BPOPResult
+from ingest import DEFAULT_DEMAND_MODEL
 from ingest.trace_schema import TraceEvent
 from profiler import run_pipeline
 from rawdata_gen import generate_configured
@@ -37,6 +39,7 @@ class GenerateRequest(BaseModel):
     actions_per_agent: list[int]
     total_lines: int | None = None
     variance: str = "mid"
+    seed: int | None = None
 
 
 app = FastAPI(
@@ -124,6 +127,7 @@ async def analyze(
     unit_value: float | None = Form(None),
     capacity_headroom: float = Form(2.0),
     ground_truth: str | None = Form(None),
+    demand_model: str = Form(DEFAULT_DEMAND_MODEL),
 ) -> dict:
     """Run the uploaded trace file through Observe -> Profile -> Mine ->
     Score -> Recommend for one workflow (auto-picked if not given).
@@ -149,6 +153,7 @@ async def analyze(
             unit_value=unit_value,
             capacity_headroom=capacity_headroom,
             ground_truth=parsed_ground_truth,
+            demand_model=demand_model,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -160,8 +165,12 @@ def generate(req: GenerateRequest) -> dict:
     ipintotech-lab/agents_profile_rawdata_gen) for the dashboard's
     "generate sample data" path. Returns the same JSONL format /analyze
     accepts as an upload, plus a summary."""
+    seed = req.seed if req.seed is not None else random.SystemRandom().randrange(2**32)
+    rng = random.Random(seed)
     try:
-        runs = generate_configured(req.agent_count, req.actions_per_agent, req.total_lines, variance=req.variance)
+        runs = generate_configured(
+            req.agent_count, req.actions_per_agent, req.total_lines, rng=rng, variance=req.variance
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
@@ -172,7 +181,7 @@ def generate(req: GenerateRequest) -> dict:
             {"run_id": run.run_id, "agent": run.agent, "workflow": run.workflow, "num_actions": len(run.events)}
             for run in runs
         ],
-        **build_dataset_manifest(runs),
+        **build_dataset_manifest(runs, seed=seed),
     }
 
 

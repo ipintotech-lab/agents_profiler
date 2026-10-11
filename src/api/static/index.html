@@ -70,6 +70,9 @@
   .pill.det { color: var(--green); border-color: rgba(74,222,128,.4); }
   .pill.nondet { color: var(--amber); border-color: rgba(251,191,36,.4); }
   .pill.insuff { color: var(--cyan); border-color: rgba(103,232,249,.4); }
+  .pill.observed { color: var(--cyan); border-color: rgba(103,232,249,.4); }
+  .pill.derived { color: var(--green); border-color: rgba(74,222,128,.4); }
+  .pill.assumed { color: var(--amber); border-color: rgba(251,191,36,.4); }
 
   .agent-card { border: 1px solid var(--line); background: var(--panel); border-radius: 4px; margin: 14px 0; overflow: hidden; }
   .agent-head { display:flex; justify-content: space-between; align-items: baseline; padding: 14px 18px; background: var(--panel2); border-bottom: 1px solid var(--line); }
@@ -167,6 +170,10 @@
             <option value="high">High</option>
           </select>
         </div>
+        <div class="field">
+          <label for="seed">Seed <span class="hint">optional, reproduces the same dataset</span></label>
+          <input type="number" id="seed" step="1" placeholder="random">
+        </div>
       </div>
       <div class="row" style="margin-bottom:0">
         <button type="button" class="ghost" id="generateBtn">Generate data</button>
@@ -185,8 +192,19 @@
         <input type="number" step="any" id="unit_value" name="unit_value" placeholder="auto: 2× unit_cost">
       </div>
       <div class="field">
-        <label for="capacity_headroom">capacity_headroom <span class="hint">× max observed demand</span></label>
+        <label for="capacity_headroom">capacity_headroom <span class="hint">× demand model</span></label>
         <input type="number" step="any" id="capacity_headroom" name="capacity_headroom" value="2.0">
+      </div>
+      <div class="field">
+        <label for="demand_model">demand_model <span class="hint">how max demand is sized</span></label>
+        <select id="demand_model" name="demand_model">
+          <option value="p95" selected>p95 (default)</option>
+          <option value="max">max</option>
+          <option value="p50">p50</option>
+          <option value="p75">p75</option>
+          <option value="p90">p90</option>
+          <option value="p99">p99</option>
+        </select>
       </div>
     </div>
     <div class="row" style="margin-bottom:0">
@@ -206,8 +224,16 @@
 
     <h2><span class="idx">02</span>Profile <span style="font-size:12px;color:var(--faint)">— B-POP leader/follower solve</span></h2>
     <p class="lede">Capacity-allocation problem built from the selected workflow, solved exactly via PPOPT + PuLP.</p>
+    <table id="provenanceTable"><thead><tr><th>Formula field</th><th>Value</th><th>Status</th><th>How it was obtained</th></tr></thead><tbody></tbody></table>
+    <p class="lede" style="margin-top:14px">Observed per-run LLM-call usage, the distribution the demand model is drawn from.</p>
+    <div class="stats" id="usageStats"></div>
     <div class="stats" id="profileStats"></div>
     <pre class="code" id="profileExplanation"></pre>
+    <pre class="code" id="capacityContext"></pre>
+
+    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Sensitivity — unit_value / unit_cost ratio</h3>
+    <p class="lede">unit_value is ASSUMED, not observed — this shows how the leader/follower optimum moves if that assumption changes, instead of presenting one ratio's result as certain.</p>
+    <table id="sensitivityTable"><thead><tr><th>Ratio</th><th class="num">unit_value</th><th class="num">x*</th><th class="num">y*</th><th class="num">objective</th></tr></thead><tbody></tbody></table>
 
     <h2><span class="idx">03</span>Mine <span style="font-size:12px;color:var(--faint)">— agents &amp; action determinism</span></h2>
     <p class="lede">For each agent, every distinct action (node) it takes, and whether the same input ever produced a different outcome.</p>
@@ -253,6 +279,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   document.getElementById('unit_cost').value = '';
   document.getElementById('unit_value').value = '';
   document.getElementById('capacity_headroom').value = '2.0';
+  document.getElementById('demand_model').value = 'p95';
 });
 
 // --- mode switching: upload a file, or generate sample data in-browser ---
@@ -298,8 +325,10 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
   const actionsPerAgent = [1, 2, 3].slice(0, agentCount).map(i => parseInt(document.getElementById(`actions${i}`).value, 10));
   const totalLinesRaw = document.getElementById('totalLines').value;
   const variance = document.getElementById('variance').value;
+  const seedRaw = document.getElementById('seed').value;
   const body = { agent_count: agentCount, actions_per_agent: actionsPerAgent, variance };
   if (totalLinesRaw !== '') body.total_lines = parseInt(totalLinesRaw, 10);
+  if (seedRaw !== '') body.seed = parseInt(seedRaw, 10);
 
   const genBtn = document.getElementById('generateBtn');
   genBtn.disabled = true;
@@ -310,7 +339,8 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
     if (!res.ok) throw new Error(data.detail || 'Generation failed.');
     generatedBlob = new Blob([data.jsonl], { type: 'application/x-ndjson' });
     generatedSummary = data;
-    genSummaryEl.innerHTML = `<span class="ok">Generated ${data.num_events} events across ${data.num_runs} runs.</span> Ready to run the pipeline.`;
+    genSummaryEl.innerHTML = `<span class="ok">Generated ${data.num_events} events across ${data.num_runs} runs.</span> ` +
+      `Ready to run the pipeline. <span class="hint">seed=${data.seed} · dataset_id=${esc(data.dataset_id)}</span>`;
     downloadBtn.disabled = false;
   } catch (e) {
     generatedBlob = null;
@@ -331,7 +361,7 @@ downloadBtn.addEventListener('click', () => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `rawdata-${generatedSummary.num_events}events-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  a.download = `rawdata-${generatedSummary.num_events}events-seed${generatedSummary.seed}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -380,9 +410,11 @@ form.addEventListener('submit', async (ev) => {
   const uc = document.getElementById('unit_cost').value;
   const uv = document.getElementById('unit_value').value;
   const ch = document.getElementById('capacity_headroom').value;
+  const dm = document.getElementById('demand_model').value;
   if (uc !== '') fd.append('unit_cost', uc);
   if (uv !== '') fd.append('unit_value', uv);
   if (ch !== '') fd.append('capacity_headroom', ch);
+  if (dm !== '') fd.append('demand_model', dm);
 
   try {
     const animatePromise = animateStages();
@@ -432,6 +464,7 @@ function render(data) {
   const uvEl = document.getElementById('unit_value');
   if (ucEl.value === '') ucEl.placeholder = f.unit_cost.toFixed(6);
   if (uvEl.value === '') uvEl.placeholder = f.unit_value.toFixed(6);
+  document.getElementById('demand_model').value = f.demand_model;
 
   // Profile
   const p = data.profile;
@@ -441,6 +474,43 @@ function render(data) {
     statCard(p.objective.toFixed(4), 'objective') +
     statCard(p.candidates.length, 'critical regions');
   document.getElementById('profileExplanation').textContent = p.explanation;
+  document.getElementById('capacityContext').textContent = data.capacity_context;
+
+  // Provenance table: unit_cost/unit_value/capacity_headroom/max_demand, each
+  // labeled OBSERVED/DERIVED/ASSUMED so the UI never implies a value was
+  // measured when it was actually a default assumption.
+  const defaults = data.formula.defaults;
+  const prov = defaults.provenance;
+  const provRows = [
+    ['unit_cost', f.unit_cost.toFixed(6)],
+    ['unit_value', f.unit_value.toFixed(6)],
+    ['capacity_headroom', f.capacity_headroom],
+    ['max_demand', `${defaults.max_demand.toFixed(3)} (${esc(defaults.demand_model)})`],
+  ];
+  const us = defaults.usage_stats;
+  document.getElementById('usageStats').innerHTML =
+    statCard(us.count, 'runs observed') +
+    statCard(us.min.toFixed(1), 'min usage') +
+    statCard(us.mean.toFixed(2), 'mean usage') +
+    statCard(us.p95.toFixed(2), 'p95 usage') +
+    statCard(us.max.toFixed(1), 'max usage');
+
+  document.querySelector('#provenanceTable tbody').innerHTML = provRows.map(([key, value]) => {
+    const info = prov[key];
+    return `<tr><td>${key}</td><td class="num">${value}</td>` +
+      `<td><span class="pill ${info.label.toLowerCase()}">${info.label}</span></td>` +
+      `<td>${esc(info.note)}</td></tr>`;
+  }).join('');
+
+  // Sensitivity sweep across unit_value/unit_cost ratios
+  document.querySelector('#sensitivityTable tbody').innerHTML = p.sensitivity.map(s => `
+    <tr>
+      <td>${s.ratio}×</td>
+      <td class="num">${s.unit_value.toFixed(6)}</td>
+      <td class="num">${Object.values(s.x).map(v => v.toFixed(3)).join(', ')}</td>
+      <td class="num">${Object.values(s.y).map(v => v.toFixed(3)).join(', ')}</td>
+      <td class="num">${s.objective.toFixed(4)}</td>
+    </tr>`).join('');
 
   // Mine
   const agentsEl = document.getElementById('agentsContainer');

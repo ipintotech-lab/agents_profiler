@@ -2,6 +2,8 @@
 "generate sample data" path."""
 import copy
 import random
+import uuid
+from datetime import UTC, datetime
 
 from .agents.common import VARIANCES, Run
 from .agents.cve_remediation import generate as generate_cve
@@ -87,9 +89,12 @@ def generate_configured(
     return runs
 
 
-def build_dataset_manifest(runs: list[Run]) -> dict[str, dict]:
-    """Dataset-level ground-truth manifest for a generated batch of runs:
-    ``{"ground_truth": {"agent/node": {"determinism_rate": float}}}``.
+def build_dataset_manifest(runs: list[Run], seed: int | None = None) -> dict:
+    """Dataset-level metadata for a generated batch of runs: the
+    ground-truth manifest plus identity fields (``dataset_id``,
+    ``generated_at``, ``seed``) that let a specific generated dataset be
+    named, reproduced, and told apart from another run with the same
+    parameters.
 
     Kept separate from the trace rows themselves so ``TraceEvent`` stays
     schema-compatible -- this travels alongside the dataset (e.g. in the
@@ -98,4 +103,9 @@ def build_dataset_manifest(runs: list[Run]) -> dict[str, dict]:
     agent_node_pairs = {
         (event["agent"], event["node"]) for run in runs for event in run.events if event.get("agent")
     }
-    return {"ground_truth": build_ground_truth_manifest(agent_node_pairs)}
+    return {
+        "ground_truth": build_ground_truth_manifest(agent_node_pairs),
+        "dataset_id": uuid.uuid4().hex,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "seed": seed,
+    }

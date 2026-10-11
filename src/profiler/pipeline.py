@@ -9,7 +9,12 @@ from __future__ import annotations
 
 from bpop import BPOP
 from bpop.result import BPOPResult
-from ingest import build_capacity_problem_from_traces, compute_default_formula
+from ingest import (
+    DEFAULT_DEMAND_MODEL,
+    build_capacity_problem_from_traces,
+    compute_default_formula,
+    sensitivity_analysis,
+)
 from ingest.trace_schema import TraceEvent
 
 from .determinism import Classification
@@ -48,6 +53,8 @@ def run_pipeline(
     unit_value: float | None = None,
     capacity_headroom: float = 2.0,
     ground_truth: dict[str, dict] | None = None,
+    demand_model: str = DEFAULT_DEMAND_MODEL,
+    sensitivity_ratios: list[float] | None = None,
 ) -> dict:
     observed = observe(events)
     if not observed["workflows"]:
@@ -57,11 +64,14 @@ def run_pipeline(
     if selected_workflow not in {w["name"] for w in observed["workflows"]}:
         raise ValueError(f"workflow '{selected_workflow}' not present in the uploaded trace file")
 
-    formula_defaults = compute_default_formula(events, selected_workflow, capacity_headroom=capacity_headroom)
+    formula_defaults = compute_default_formula(
+        events, selected_workflow, capacity_headroom=capacity_headroom, demand_model=demand_model
+    )
     formula_used = {
         "unit_cost": unit_cost if unit_cost is not None else formula_defaults["unit_cost"],
         "unit_value": unit_value if unit_value is not None else formula_defaults["unit_value"],
         "capacity_headroom": capacity_headroom,
+        "demand_model": demand_model,
     }
 
     problem = build_capacity_problem_from_traces(
@@ -70,8 +80,17 @@ def run_pipeline(
         unit_cost=unit_cost,
         value_per_used_call=unit_value,
         capacity_headroom=capacity_headroom,
+        demand_model=demand_model,
     )
     bpop_result = BPOP.solve(problem)
+    sensitivity = sensitivity_analysis(
+        events,
+        selected_workflow,
+        ratios=sensitivity_ratios,
+        unit_cost=unit_cost,
+        capacity_headroom=capacity_headroom,
+        demand_model=demand_model,
+    )
 
     mined = mine(events, selected_workflow)
     scored = score(mined)
@@ -113,20 +132,39 @@ def run_pipeline(
         )
         predictions[f"{s.agent}/{s.node}"] = s.classification
 
+    # B-POP <-> Mine/Score/Recommend coupling (architectural decision, P1):
+    # B-POP solves one workflow-level capacity allocation (a single x*/y*
+    # scalar pair), while Score/Recommend rank many individual nodes. Mixing
+    # the B-POP objective into each node's score would conflate two
+    # different decision scopes -- capacity sizing vs. per-action cost/risk
+    # -- behind one opaque number, and would make Score depend on Profile
+    # succeeding. Instead the coupling stays *contextual*: B-POP's result is
+    # surfaced alongside the recommendations as read-only context a reader
+    # can use to judge whether a costly node's spend lines up with the
+    # workflow's sized capacity, but it never changes `score`.
+    bpop_capacity_context = (
+        f"B-POP sizes '{selected_workflow}' capacity at x*={bpop_result.x.get('x', 0):.3f} "
+        f"(allocated) against y*={bpop_result.y.get('y', 0):.3f} (used), from a "
+        f"{demand_model} demand model over observed per-run usage; objective={bpop_result.objective:.4f}. "
+        "This is workflow-level context for the recommendations below, not an input to any node's score."
+    )
+
     report = {
         "observe": {**observed, "selected_workflow": selected_workflow},
         "formula": {"used": formula_used, "defaults": formula_defaults},
-        "profile": _serialize_bpop_result(bpop_result),
+        "profile": {**_serialize_bpop_result(bpop_result), "sensitivity": sensitivity},
         "mine": {"by_agent": agents_summary},
         "score": {
             "weights": {"cost_weight": 0.5, "nondeterminism_weight": 0.5},
             "formula": (
                 "score = cost_weight * cost_component + nondeterminism_weight * nondeterminism_component, "
                 "where nondeterminism_component is 1.0 for NON_DETERMINISTIC, 0.0 for DETERMINISTIC, "
-                "and 0.5 for INSUFFICIENT_EVIDENCE"
+                "and 0.5 for INSUFFICIENT_EVIDENCE. B-POP's capacity solve is not part of this formula -- "
+                "see 'capacity_context'."
             ),
         },
         "recommend": recommendations,
+        "capacity_context": bpop_capacity_context,
     }
 
     if ground_truth:
