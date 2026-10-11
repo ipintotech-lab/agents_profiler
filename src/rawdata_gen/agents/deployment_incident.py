@@ -3,9 +3,11 @@ randomized so repeated generation produces different (but structurally
 consistent) traces."""
 import random
 
+from ..ground_truth import apply_noise
 from .common import Run, jittered_int, jittered_uniform
 
 ERROR_RATES = ["normal", "elevated"]
+_SEVERITIES = ["high", "low"]
 
 
 def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Run]:
@@ -22,9 +24,14 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
         tool="monitoring.get_release_metrics", latency_ms=jittered_int(rng, 150, 250, variance, floor=1),
         parent=parent,
     )
+    severity_canonical = "high" if error_rate == "elevated" else "low"
+    severity = apply_noise(rng, "assess_incident", severity_canonical, _SEVERITIES)
     run.action(
-        "assess_incident", state={**state, "rollback_allowed": rollback_allowed},
-        decision=("incident_severity", "high" if error_rate == "elevated" else "low"), model="demo-llm-v1",
+        # Canonicalized on error_rate/rollback_allowed only -- deployment_id
+        # is unique per run and would otherwise prevent any repeated-input
+        # evidence from ever accumulating for this node.
+        "assess_incident", state={"error_rate": error_rate, "rollback_allowed": rollback_allowed},
+        decision=("incident_severity", severity), model="demo-llm-v1",
         tokens=(jittered_int(rng, 600, 800, variance, floor=1), jittered_int(rng, 40, 75, variance, floor=1)),
         latency_ms=jittered_int(rng, 420, 650, variance, floor=1),
         cost=round(jittered_uniform(rng, 0.004, 0.0065, variance), 5), parent=parent,

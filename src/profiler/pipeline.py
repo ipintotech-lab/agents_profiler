@@ -12,7 +12,9 @@ from bpop.result import BPOPResult
 from ingest import build_capacity_problem_from_traces, compute_default_formula
 from ingest.trace_schema import TraceEvent
 
+from .determinism import Classification
 from .mine import mine, observe, recommend, score
+from .validation import validate
 
 
 def _serialize_bpop_result(result: BPOPResult) -> dict:
@@ -45,6 +47,7 @@ def run_pipeline(
     unit_cost: float | None = None,
     unit_value: float | None = None,
     capacity_headroom: float = 2.0,
+    ground_truth: dict[str, dict] | None = None,
 ) -> dict:
     observed = observe(events)
     if not observed["workflows"]:
@@ -75,17 +78,32 @@ def run_pipeline(
     recommendations = recommend(scored)
 
     agents_summary = {}
+    predictions: dict[str, Classification] = {}
     for s in scored:
         bucket = agents_summary.setdefault(
-            s.agent, {"num_actions": 0, "deterministic": 0, "non_deterministic": 0, "actions": []}
+            s.agent,
+            {
+                "num_actions": 0,
+                "deterministic": 0,
+                "non_deterministic": 0,
+                "insufficient_evidence": 0,
+                "actions": [],
+            },
         )
         bucket["num_actions"] += 1
-        bucket["deterministic" if s.deterministic else "non_deterministic"] += 1
+        if s.classification == Classification.DETERMINISTIC:
+            bucket["deterministic"] += 1
+        elif s.classification == Classification.NON_DETERMINISTIC:
+            bucket["non_deterministic"] += 1
+        else:
+            bucket["insufficient_evidence"] += 1
         bucket["actions"].append(
             {
                 "node": s.node,
                 "occurrences": s.occurrences,
-                "deterministic": s.deterministic,
+                "classification": s.classification.value,
+                "deterministic": s.classification == Classification.DETERMINISTIC,
+                "evidence": s.evidence.to_dict(),
                 "distinct_outcomes": s.distinct_outcomes,
                 "avg_cost": s.avg_cost,
                 "avg_latency_ms": s.avg_latency_ms,
@@ -93,15 +111,25 @@ def run_pipeline(
                 "score": round(s.score, 4),
             }
         )
+        predictions[f"{s.agent}/{s.node}"] = s.classification
 
-    return {
+    report = {
         "observe": {**observed, "selected_workflow": selected_workflow},
         "formula": {"used": formula_used, "defaults": formula_defaults},
         "profile": _serialize_bpop_result(bpop_result),
         "mine": {"by_agent": agents_summary},
         "score": {
             "weights": {"cost_weight": 0.5, "nondeterminism_weight": 0.5},
-            "formula": "score = cost_weight * cost_component + nondeterminism_weight * (0 if deterministic else 1)",
+            "formula": (
+                "score = cost_weight * cost_component + nondeterminism_weight * nondeterminism_component, "
+                "where nondeterminism_component is 1.0 for NON_DETERMINISTIC, 0.0 for DETERMINISTIC, "
+                "and 0.5 for INSUFFICIENT_EVIDENCE"
+            ),
         },
         "recommend": recommendations,
     }
+
+    if ground_truth:
+        report["validation"] = validate(predictions, ground_truth).to_dict()
+
+    return report

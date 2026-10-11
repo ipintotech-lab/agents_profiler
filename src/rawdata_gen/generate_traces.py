@@ -7,6 +7,7 @@ from .agents.common import VARIANCES, Run
 from .agents.cve_remediation import generate as generate_cve
 from .agents.deployment_incident import generate as generate_deployment
 from .agents.support_triage import generate as generate_support
+from .ground_truth import build_ground_truth_manifest
 
 AGENT_GENERATORS = [generate_cve, generate_support, generate_deployment]
 
@@ -84,3 +85,17 @@ def generate_configured(
             remaining -= len(run.events)
             runs.append(run)
     return runs
+
+
+def build_dataset_manifest(runs: list[Run]) -> dict[str, dict]:
+    """Dataset-level ground-truth manifest for a generated batch of runs:
+    ``{"ground_truth": {"agent/node": {"determinism_rate": float}}}``.
+
+    Kept separate from the trace rows themselves so ``TraceEvent`` stays
+    schema-compatible -- this travels alongside the dataset (e.g. in the
+    ``/generate`` response and the downloaded JSON).
+    """
+    agent_node_pairs = {
+        (event["agent"], event["node"]) for run in runs for event in run.events if event.get("agent")
+    }
+    return {"ground_truth": build_ground_truth_manifest(agent_node_pairs)}

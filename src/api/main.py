@@ -29,6 +29,7 @@ from ingest.trace_schema import TraceEvent
 from profiler import run_pipeline
 from rawdata_gen import generate_configured
 from rawdata_gen.agents.common import to_jsonl
+from rawdata_gen.generate_traces import build_dataset_manifest
 
 
 class GenerateRequest(BaseModel):
@@ -122,11 +123,24 @@ async def analyze(
     unit_cost: float | None = Form(None),
     unit_value: float | None = Form(None),
     capacity_headroom: float = Form(2.0),
+    ground_truth: str | None = Form(None),
 ) -> dict:
     """Run the uploaded trace file through Observe -> Profile -> Mine ->
-    Score -> Recommend for one workflow (auto-picked if not given)."""
+    Score -> Recommend for one workflow (auto-picked if not given).
+
+    ``ground_truth`` is an optional JSON-encoded ``{"agent/node": {"determinism_rate": float}}``
+    manifest (as returned by ``/generate``) -- when present, the report
+    includes a "validation" section scoring the profiler's classification
+    against it.
+    """
     raw = await file.read()
     events = _parse_trace_events(raw)
+    parsed_ground_truth = None
+    if ground_truth:
+        try:
+            parsed_ground_truth = json.loads(ground_truth)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail=f"could not parse ground_truth: {exc}") from exc
     try:
         return run_pipeline(
             events,
@@ -134,6 +148,7 @@ async def analyze(
             unit_cost=unit_cost,
             unit_value=unit_value,
             capacity_headroom=capacity_headroom,
+            ground_truth=parsed_ground_truth,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -157,6 +172,7 @@ def generate(req: GenerateRequest) -> dict:
             {"run_id": run.run_id, "agent": run.agent, "workflow": run.workflow, "num_actions": len(run.events)}
             for run in runs
         ],
+        **build_dataset_manifest(runs),
     }
 
 

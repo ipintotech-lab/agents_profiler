@@ -3,9 +3,11 @@ case data so repeated generation produces different (but structurally
 consistent) traces."""
 import random
 
+from ..ground_truth import apply_noise
 from .common import Run, jittered_int, jittered_uniform
 
 SEVERITIES = ["low", "medium", "high", "critical"]
+_REMEDIATIONS = ["upgrade", "mitigate"]
 
 
 def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Run]:
@@ -28,9 +30,11 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
         tool="catalog.get_component_owner", latency_ms=jittered_int(rng, 100, 200, variance, floor=1), parent=parent,
     )
     component = f"service-{rng.randint(1, 50)}"
+    remediation_canonical = "upgrade" if not issue_exists else "mitigate"
+    remediation = apply_noise(rng, "analyze_remediation", remediation_canonical, _REMEDIATIONS)
     run.action(
         "analyze_remediation", state={**state, "component": component},
-        decision=("remediation", "upgrade" if not issue_exists else "mitigate"), model="demo-llm-v1",
+        decision=("remediation", remediation), model="demo-llm-v1",
         tokens=(jittered_int(rng, 1700, 2200, variance, floor=1), jittered_int(rng, 200, 320, variance, floor=1)),
         latency_ms=jittered_int(rng, 1150, 1600, variance, floor=1),
         cost=round(jittered_uniform(rng, 0.013, 0.02, variance), 5), parent=parent,
