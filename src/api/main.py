@@ -8,6 +8,7 @@ HTTP instead of stdout.
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
 
 from bpop import (
@@ -68,6 +69,11 @@ def _serialize_result(result: BPOPResult) -> dict:
         ],
         "explanation": result.explanation,
     }
+
+
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/health")
