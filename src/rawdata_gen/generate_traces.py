@@ -18,10 +18,14 @@ def _build_run(generator, action_count: int, run_id: str, rng: random.Random) ->
     template.run_id = run_id
     template.trace_id = f"trace-{run_id}"
     template.events = template.events[:action_count]
+    base_event = template.events[-1]
+    base_node = base_event["node"]
+    followup_num = 1
     while len(template.events) < action_count:
-        event = copy.deepcopy(template.events[-1])
-        event["node"] = f"{event['node']}_followup"
+        event = copy.deepcopy(base_event)
+        event["node"] = f"{base_node}_followup_{followup_num}"
         template.events.append(event)
+        followup_num += 1
     for event in template.events:
         event["run_id"] = template.run_id
         event["trace_id"] = template.trace_id
