@@ -39,8 +39,8 @@ def generate_configured(agent_count: int, actions_per_agent: list[int], total_li
         raise ValueError(f"agent_count must be between 1 and {len(AGENT_GENERATORS)}")
     if len(actions_per_agent) != agent_count:
         raise ValueError("provide exactly one action count per agent")
-    if any(not 4 <= count <= 7 for count in actions_per_agent):
-        raise ValueError("each action count must be between 4 and 7")
+    if any(not 4 <= count <= 20 for count in actions_per_agent):
+        raise ValueError("each action count must be between 4 and 20")
     if total_lines is not None and total_lines < 1:
         raise ValueError("total_lines must be at least 1")
 

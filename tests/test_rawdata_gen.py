@@ -25,6 +25,13 @@ def test_generate_configured_respects_total_lines_round_robin():
 def test_generate_configured_rejects_out_of_range_action_count():
     with pytest.raises(ValueError):
         generate_configured(1, [3])
+    with pytest.raises(ValueError):
+        generate_configured(1, [21])
+
+
+def test_generate_configured_allows_up_to_twenty_actions():
+    runs = generate_configured(1, [20])
+    assert len(runs[0].events) == 20
 
 
 def test_generated_events_validate_against_trace_schema():
