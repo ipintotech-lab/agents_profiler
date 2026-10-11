@@ -69,6 +69,7 @@
   .pill { display: inline-block; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); }
   .pill.det { color: var(--green); border-color: rgba(74,222,128,.4); }
   .pill.nondet { color: var(--amber); border-color: rgba(251,191,36,.4); }
+  .pill.insuff { color: var(--cyan); border-color: rgba(103,232,249,.4); }
 
   .agent-card { border: 1px solid var(--line); background: var(--panel); border-radius: 4px; margin: 14px 0; overflow: hidden; }
   .agent-head { display:flex; justify-content: space-between; align-items: baseline; padding: 14px 18px; background: var(--panel2); border-bottom: 1px solid var(--line); }
@@ -448,7 +449,7 @@ function render(data) {
     <div class="agent-card">
       <div class="agent-head">
         <span class="name">${esc(agent)}</span>
-        <span class="sub">${info.num_actions} actions · ${info.deterministic} deterministic · ${info.non_deterministic} non-deterministic</span>
+        <span class="sub">${info.num_actions} actions · ${info.deterministic} deterministic · ${info.non_deterministic} non-deterministic · ${info.insufficient_evidence} insufficient evidence</span>
       </div>
       <div class="agent-body">
         <table>
@@ -457,7 +458,7 @@ function render(data) {
             ${info.actions.map(a => `
               <tr>
                 <td>${esc(a.node)}</td>
-                <td><span class="pill ${a.deterministic ? 'det' : 'nondet'}">${a.deterministic ? 'deterministic' : 'non-deterministic'}</span></td>
+                <td><span class="pill ${classificationPillClass(a.classification)}">${classificationLabel(a.classification)}</span></td>
                 <td class="num">${a.occurrences}</td>
                 <td class="num">$${a.avg_cost.toFixed(4)}</td>
                 <td class="num">${a.avg_latency_ms.toFixed(0)}</td>
@@ -485,6 +486,18 @@ function render(data) {
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function classificationPillClass(classification) {
+  if (classification === 'DETERMINISTIC') return 'det';
+  if (classification === 'NON_DETERMINISTIC') return 'nondet';
+  return 'insuff';
+}
+
+function classificationLabel(classification) {
+  if (classification === 'DETERMINISTIC') return 'deterministic';
+  if (classification === 'NON_DETERMINISTIC') return 'non-deterministic';
+  return 'insufficient evidence';
 }
 </script>
 
