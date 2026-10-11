@@ -2,8 +2,35 @@
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from typing import Any
+
+VARIANCES = ("low", "mid", "high")
+
+# Scales the half-width of a field's jitter range around its center. "mid" is
+# the original tuned range; "low"/"high" tighten or widen it, so the same
+# center of mass is kept but the spread of generated values -- and therefore
+# of downstream cost_component/score -- changes.
+_VARIANCE_SCALE = {"low": 0.3, "mid": 1.0, "high": 2.5}
+
+
+def jittered_uniform(rng: random.Random, low: float, high: float, variance: str, floor: float = 0.0) -> float:
+    """A random float centered between ``low``/``high``, spread scaled by ``variance``."""
+    scale = _VARIANCE_SCALE[variance]
+    center = (low + high) / 2
+    half_width = (high - low) / 2 * scale
+    return max(floor, rng.uniform(center - half_width, center + half_width))
+
+
+def jittered_int(rng: random.Random, low: int, high: int, variance: str, floor: int = 0) -> int:
+    """A random int centered between ``low``/``high``, spread scaled by ``variance``."""
+    scale = _VARIANCE_SCALE[variance]
+    center = (low + high) / 2
+    half_width = (high - low) / 2 * scale
+    lo = max(floor, round(center - half_width))
+    hi = max(lo, round(center + half_width))
+    return rng.randint(lo, hi)
 
 
 class Run:

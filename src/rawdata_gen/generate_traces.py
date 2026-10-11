@@ -3,7 +3,7 @@
 import copy
 import random
 
-from .agents.common import Run
+from .agents.common import VARIANCES, Run
 from .agents.cve_remediation import generate as generate_cve
 from .agents.deployment_incident import generate as generate_deployment
 from .agents.support_triage import generate as generate_support
@@ -11,10 +11,10 @@ from .agents.support_triage import generate as generate_support
 AGENT_GENERATORS = [generate_cve, generate_support, generate_deployment]
 
 
-def _build_run(generator, action_count: int, run_id: str, rng: random.Random) -> Run:
+def _build_run(generator, action_count: int, run_id: str, rng: random.Random, variance: str) -> Run:
     """Clone a freshly-randomized run from ``generator``, resized to exactly
     ``action_count`` events."""
-    template = generator(rng)[0]
+    template = generator(rng, variance)[0]
     template.run_id = run_id
     template.trace_id = f"trace-{run_id}"
     template.events = template.events[:action_count]
@@ -39,6 +39,7 @@ def generate_configured(
     actions_per_agent: list[int],
     total_lines: int | None = None,
     rng: random.Random | None = None,
+    variance: str = "mid",
 ) -> list[Run]:
     """Create runs for the selected agents with the requested action counts.
 
@@ -47,7 +48,9 @@ def generate_configured(
     events exist; the final run is truncated if needed. Field values
     (severities, categories, costs, latencies, etc.) are randomized on every
     call, so repeated generation with the same parameters produces different
-    data.
+    data. ``variance`` ("low"/"mid"/"high") scales how spread out the
+    randomized cost/latency/token values are, to stress-test the scoring
+    formula's sensitivity.
     """
     if not 1 <= agent_count <= len(AGENT_GENERATORS):
         raise ValueError(f"agent_count must be between 1 and {len(AGENT_GENERATORS)}")
@@ -57,12 +60,14 @@ def generate_configured(
         raise ValueError("each action count must be between 4 and 20")
     if total_lines is not None and (total_lines < 20 or total_lines % 20 != 0):
         raise ValueError("total_lines must be a positive multiple of 20")
+    if variance not in VARIANCES:
+        raise ValueError(f"variance must be one of {VARIANCES}")
 
     rng = rng or random.Random()
     agents = list(zip(AGENT_GENERATORS, actions_per_agent))
     if total_lines is None:
         return [
-            _build_run(generator, action_count, f"custom-{index:02d}", rng)
+            _build_run(generator, action_count, f"custom-{index:02d}", rng, variance)
             for index, (generator, action_count) in enumerate(agents, 1)
         ]
 
@@ -74,7 +79,7 @@ def generate_configured(
         for index, (generator, action_count) in enumerate(agents, 1):
             if remaining <= 0:
                 break
-            run = _build_run(generator, action_count, f"custom-{index:02d}-{cycle:04d}", rng)
+            run = _build_run(generator, action_count, f"custom-{index:02d}-{cycle:04d}", rng, variance)
             run.events = run.events[:remaining]
             remaining -= len(run.events)
             runs.append(run)

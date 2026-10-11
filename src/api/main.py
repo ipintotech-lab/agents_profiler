@@ -35,6 +35,7 @@ class GenerateRequest(BaseModel):
     agent_count: int
     actions_per_agent: list[int]
     total_lines: int | None = None
+    variance: str = "mid"
 
 
 app = FastAPI(
@@ -145,7 +146,7 @@ def generate(req: GenerateRequest) -> dict:
     "generate sample data" path. Returns the same JSONL format /analyze
     accepts as an upload, plus a summary."""
     try:
-        runs = generate_configured(req.agent_count, req.actions_per_agent, req.total_lines)
+        runs = generate_configured(req.agent_count, req.actions_per_agent, req.total_lines, variance=req.variance)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {

@@ -103,6 +103,10 @@ def test_recommend_orders_worst_first_and_messages_match_bucket():
     assert recs[-1]["node"] == "cheap_stable"
     assert "healthy, no action needed" in recs[-1]["message"]
 
+    assert "cost_component = avg_cost / max_cost" in recs[0]["derivation"]
+    assert "non-deterministic (2 distinct outcomes)" in recs[0]["derivation"]
+    assert "deterministic, so nondeterminism_component=0.0" in recs[-1]["derivation"]
+
 
 def test_run_pipeline_end_to_end_on_sample_traces():
     events = load_traces(DATA_PATH)

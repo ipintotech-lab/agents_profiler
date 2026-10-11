@@ -80,6 +80,7 @@
   .rec .score { font-family: var(--serif); font-size: 18px; min-width: 50px; text-align:center; }
   .rec .msg { color: var(--dim); font-size: 13px; }
   .rec .msg b { color: var(--ink); font-weight: 400; }
+  .rec .derivation { margin-top: 6px; font-family: var(--mono, monospace); font-size: 11px; color: var(--faint, #888); line-height: 1.5; }
 
   pre.code { background: #0a0d0b; border: 1px solid var(--line); border-left: 2px solid var(--lime); padding: 12px 16px; font-size: 11.5px; color: var(--dim); overflow-x: auto; border-radius: 3px; margin: 12px 0; line-height: 1.5; white-space: pre-wrap; }
 
@@ -156,6 +157,14 @@
         <div class="field">
           <label for="totalLines">Total lines <span class="hint">optional, multiple of 20</span></label>
           <input type="number" id="totalLines" min="20" step="20" placeholder="1 run per agent">
+        </div>
+        <div class="field">
+          <label for="variance">Variance <span class="hint">spread of cost/latency/tokens</span></label>
+          <select id="variance">
+            <option value="low">Low</option>
+            <option value="mid" selected>Mid</option>
+            <option value="high">High</option>
+          </select>
         </div>
       </div>
       <div class="row" style="margin-bottom:0">
@@ -286,7 +295,8 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
   const agentCount = parseInt(agentCountEl.value, 10);
   const actionsPerAgent = [1, 2, 3].slice(0, agentCount).map(i => parseInt(document.getElementById(`actions${i}`).value, 10));
   const totalLinesRaw = document.getElementById('totalLines').value;
-  const body = { agent_count: agentCount, actions_per_agent: actionsPerAgent };
+  const variance = document.getElementById('variance').value;
+  const body = { agent_count: agentCount, actions_per_agent: actionsPerAgent, variance };
   if (totalLinesRaw !== '') body.total_lines = parseInt(totalLinesRaw, 10);
 
   const genBtn = document.getElementById('generateBtn');
@@ -447,7 +457,9 @@ function render(data) {
   recEl.innerHTML = data.recommend.map(r => `
     <div class="rec">
       <div class="score ${r.score >= 0.5 ? 'warn' : 'good'}">${r.score.toFixed(2)}</div>
-      <div class="msg">${esc(r.message)}</div>
+      <div class="msg">${esc(r.message)}
+        <div class="derivation">${esc(r.derivation)}</div>
+      </div>
     </div>`).join('');
 }
 

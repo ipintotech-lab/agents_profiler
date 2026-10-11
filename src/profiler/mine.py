@@ -138,9 +138,31 @@ def _recommend_for_node(s: ActionStats) -> str:
     return f"'{s.node}' ({s.agent}) is deterministic and low-cost — healthy, no action needed."
 
 
+def _derivation_for_node(s: ActionStats, max_cost: float) -> str:
+    """Spell out, in words and numbers, how this node's score followed
+    from the formula — so a repeated score (e.g. the costliest node in a
+    workflow always landing on cost_component=1.0) reads as the formula's
+    normalization doing its job, not as evidence the input data is static."""
+    nondeterminism_component = 0.0 if s.deterministic else 1.0
+    determinism_note = (
+        "deterministic, so nondeterminism_component=0.0"
+        if s.deterministic
+        else f"non-deterministic ({len(s.distinct_outcomes)} distinct outcomes), so nondeterminism_component=1.0"
+    )
+    return (
+        f"cost_component = avg_cost / max_cost = {s.avg_cost:.5f} / {max_cost:.5f} = {s.cost_component:.3f} "
+        f"(max_cost is the highest avg_cost among this workflow's nodes — the costliest node always "
+        f"normalizes to 1.0, regardless of how randomized its raw cost was); "
+        f"{determinism_note}; "
+        f"score = {COST_WEIGHT} * {s.cost_component:.3f} + {NONDETERMINISM_WEIGHT} * {nondeterminism_component:.1f} "
+        f"= {s.score:.3f}."
+    )
+
+
 def recommend(stats: list[ActionStats]) -> list[dict]:
     """Stage 5: one rule-based recommendation per node, worst-scoring first."""
     ordered = sorted(stats, key=lambda s: -s.score)
+    max_cost = max((s.avg_cost for s in stats), default=0.0)
     return [
         {
             "agent": s.agent,
@@ -148,6 +170,7 @@ def recommend(stats: list[ActionStats]) -> list[dict]:
             "score": round(s.score, 4),
             "deterministic": s.deterministic,
             "message": _recommend_for_node(s),
+            "derivation": _derivation_for_node(s, max_cost),
         }
         for s in ordered
     ]

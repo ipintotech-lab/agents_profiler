@@ -69,3 +69,45 @@ def test_generate_endpoint_rejects_bad_action_count():
     client = TestClient(app)
     resp = client.post("/generate", json={"agent_count": 1, "actions_per_agent": [2]})
     assert resp.status_code == 400
+
+
+def test_generate_configured_rejects_invalid_variance():
+    with pytest.raises(ValueError):
+        generate_configured(1, [4], variance="extreme")
+
+
+def test_generate_configured_default_variance_is_mid():
+    import random
+
+    rng_a = random.Random(42)
+    rng_b = random.Random(42)
+    runs_mid = generate_configured(1, [4], rng=rng_a)
+    runs_explicit_mid = generate_configured(1, [4], rng=rng_b, variance="mid")
+    assert to_jsonl(runs_mid) == to_jsonl(runs_explicit_mid)
+
+
+def test_variance_high_produces_wider_spread_than_low():
+    import random
+    import statistics
+
+    def sample_costs(variance: str, n: int = 200) -> list[float]:
+        rng = random.Random(0)
+        costs = []
+        for _ in range(n):
+            run = generate_configured(1, [4], rng=rng, variance=variance)[0]
+            costs.extend(
+                event["cost"] for event in run.events if event.get("cost") is not None
+            )
+        return costs
+
+    low_costs = sample_costs("low")
+    high_costs = sample_costs("high")
+    assert statistics.pstdev(high_costs) > statistics.pstdev(low_costs)
+
+
+def test_generate_endpoint_rejects_bad_variance():
+    client = TestClient(app)
+    resp = client.post(
+        "/generate", json={"agent_count": 1, "actions_per_agent": [4], "variance": "extreme"}
+    )
+    assert resp.status_code == 400

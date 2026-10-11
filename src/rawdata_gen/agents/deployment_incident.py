@@ -3,12 +3,12 @@ randomized so repeated generation produces different (but structurally
 consistent) traces."""
 import random
 
-from .common import Run
+from .common import Run, jittered_int, jittered_uniform
 
 ERROR_RATES = ["normal", "elevated"]
 
 
-def generate(rng: random.Random | None = None) -> list[Run]:
+def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Run]:
     rng = rng or random.Random()
     deployment = f"deploy-{rng.randint(1000, 9999)}"
     error_rate = rng.choice(ERROR_RATES)
@@ -19,13 +19,15 @@ def generate(rng: random.Random | None = None) -> list[Run]:
     state = {"deployment_id": deployment, "error_rate": error_rate}
     run.action(
         "inspect_release_metrics", event_type="tool_call", state=state,
-        tool="monitoring.get_release_metrics", latency_ms=rng.randint(150, 250), parent=parent,
+        tool="monitoring.get_release_metrics", latency_ms=jittered_int(rng, 150, 250, variance, floor=1),
+        parent=parent,
     )
     run.action(
         "assess_incident", state={**state, "rollback_allowed": rollback_allowed},
         decision=("incident_severity", "high" if error_rate == "elevated" else "low"), model="demo-llm-v1",
-        tokens=(rng.randint(600, 800), rng.randint(40, 75)), latency_ms=rng.randint(420, 650),
-        cost=round(rng.uniform(0.004, 0.0065), 5), parent=parent,
+        tokens=(jittered_int(rng, 600, 800, variance, floor=1), jittered_int(rng, 40, 75, variance, floor=1)),
+        latency_ms=jittered_int(rng, 420, 650, variance, floor=1),
+        cost=round(jittered_uniform(rng, 0.004, 0.0065, variance), 5), parent=parent,
     )
     run.action(
         "choose_mitigation", state={"error_rate": error_rate, "rollback_allowed": rollback_allowed},
@@ -36,10 +38,10 @@ def generate(rng: random.Random | None = None) -> list[Run]:
         "apply_mitigation", event_type="tool_call",
         state={"deployment_id": deployment, "rollback_allowed": rollback_allowed},
         tool="release.apply_rollback" if rollback_allowed else "release.pause_rollout",
-        latency_ms=rng.randint(300, 450), parent=parent,
+        latency_ms=jittered_int(rng, 300, 450, variance, floor=1), parent=parent,
     )
     run.action(
         "notify_oncall", event_type="tool_call", state={"deployment_id": deployment},
-        tool="messaging.notify_oncall", latency_ms=rng.randint(100, 180), parent=parent,
+        tool="messaging.notify_oncall", latency_ms=jittered_int(rng, 100, 180, variance, floor=1), parent=parent,
     )
     return [run]
