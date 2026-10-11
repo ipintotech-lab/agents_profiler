@@ -1,1 +1,7 @@
-.
+ppopt>=1.6.0
+pulp>=2.8,<3
+numpy>=1.26
+scipy>=1.11
+pydantic>=2.6
+fastapi>=0.110
+uvicorn>=0.27
