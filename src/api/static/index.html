@@ -255,12 +255,19 @@ const tabGenerate = document.getElementById('tabGenerate');
 const genSummaryEl = document.getElementById('genSummary');
 const agentCountEl = document.getElementById('agentCount');
 
+function updateRunBtnState() {
+  const blocked = mode === 'generate' && !generatedBlob;
+  runBtn.disabled = blocked;
+  runBtn.title = blocked ? 'Click "Generate data" first.' : '';
+}
+
 function setMode(m) {
   mode = m;
   tabUpload.classList.toggle('active', m === 'upload');
   tabGenerate.classList.toggle('active', m === 'generate');
   uploadPanel.hidden = m !== 'upload';
   generatePanel.hidden = m !== 'generate';
+  updateRunBtnState();
 }
 tabUpload.addEventListener('click', () => setMode('upload'));
 tabGenerate.addEventListener('click', () => setMode('generate'));
@@ -272,6 +279,7 @@ function updateAgentFields() {
 }
 agentCountEl.addEventListener('change', updateAgentFields);
 updateAgentFields();
+updateRunBtnState();
 
 document.getElementById('generateBtn').addEventListener('click', async () => {
   errEl.style.display = 'none';
@@ -297,7 +305,27 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
   } finally {
     genBtn.disabled = false;
     genBtn.textContent = 'Generate data';
+    updateRunBtnState();
   }
+});
+
+// any change to the generation inputs invalidates the last generated batch,
+// so "Run pipeline" can't silently run stale data
+generatePanel.addEventListener('input', () => {
+  if (generatedBlob) {
+    generatedBlob = null;
+    generatedSummary = null;
+    genSummaryEl.innerHTML = '';
+  }
+  updateRunBtnState();
+});
+generatePanel.addEventListener('change', () => {
+  if (generatedBlob) {
+    generatedBlob = null;
+    generatedSummary = null;
+    genSummaryEl.innerHTML = '';
+  }
+  updateRunBtnState();
 });
 
 form.addEventListener('submit', async (ev) => {
@@ -309,7 +337,7 @@ form.addEventListener('submit', async (ev) => {
 
   const fd = new FormData();
   if (mode === 'generate') {
-    if (!generatedBlob) { showErr('Generate data first.'); runBtn.disabled = false; runBtn.textContent = 'Run pipeline'; return; }
+    if (!generatedBlob) { showErr('Generate data first.'); updateRunBtnState(); runBtn.textContent = 'Run pipeline'; return; }
     fd.append('file', generatedBlob, 'generated.jsonl');
   } else {
     const fileInput = document.getElementById('file');
@@ -336,8 +364,8 @@ form.addEventListener('submit', async (ev) => {
     resetStages();
     showErr(e.message || String(e));
   } finally {
-    runBtn.disabled = false;
     runBtn.textContent = 'Run pipeline';
+    updateRunBtnState();
   }
 });
 

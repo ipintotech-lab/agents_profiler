@@ -10,24 +10,35 @@ trace rows (the normalized trace schema from
 
 ## Scope — what this is, and isn't
 
-This repo is the **B-POP optimizer and one example ingestion path**, nothing
-more. It is **not** an implementation of the "AI Agent Profiler" product
-described in `AI_Agent_Profiler_Product_Technical_Design_Review.docx` — that
+This repo is the **B-POP optimizer, a trace-ingestion path, and a small
+Observe → Profile → Mine → Score → Recommend test environment** built on top
+of them — not a full implementation of the "AI Agent Profiler" product
+described in `AI_Agent_Profiler_Product_Technical_Design_Review.docx`. That
 design covers a much larger system (OTLP trace collection, flow
-reconstruction, cost attribution, determinism scoring, recommendation
-generation, replay/shadow execution, privacy controls) that does not exist
-here. The only thing borrowed from that doc is its §7 trace schema, used as
-the input shape for `src/ingest/`. Concretely, this repo currently has:
+reconstruction, replay/shadow execution, privacy controls) that does not
+exist here. The only thing borrowed from that doc is its §7 trace schema,
+used as the input shape for `src/ingest/` and `src/profiler/`. Concretely,
+this repo currently has:
 
 - a working leader/follower B-POP solver (`src/bpop/`), validated against
   one hand-specified problem (the doc3 capacity-allocation experiment);
 - a small ingestion function that maps JSONL trace rows into *that same*
   capacity-allocation problem shape, using one assumption (`value_per_used_call`,
   defaulting to 2x observed cost per call) that is not derived from traces;
-- a thin FastAPI wrapper (`src/api/`) so the solver is reachable over HTTP.
+- an Observe/Mine/Score/Recommend pipeline (`src/profiler/`) that takes a
+  trace file for one workflow and produces per-node determinism
+  classification, cost-weighted scoring, and rule-based recommendations;
+- a synthetic trace-data generator (`src/rawdata_gen/`, vendored from
+  [`agents_profile_rawdata_gen`](https://github.com/ipintotech-lab/agents_profile_rawdata_gen))
+  so the pipeline can be exercised without a real trace file;
+- a dashboard UI (`src/api/static/index.html`) at `/` that runs an uploaded
+  trace file, or data generated in-browser, through that pipeline and
+  renders the report;
+- a thin FastAPI wrapper (`src/api/`) exposing the raw solver (`/solve`),
+  the pipeline (`/analyze`), and the generator (`/generate`) over HTTP.
 
-It has no trace collector, no UI, no cost/determinism dashboards, and no
-recommendation engine.
+It has no trace collector, no replay/shadow execution, and no privacy
+controls — those remain out of scope per the design doc above.
 
 ## Architecture
 
@@ -47,8 +58,21 @@ recommendation engine.
   and maps them into a capacity-allocation `BilevelProblem` (leader =
   capacity allocated per run, follower = capacity actually used, estimated
   from observed LLM-call counts and cost).
-- `src/api/` — a thin FastAPI wrapper (`/health`, `/solve`,
-  `/examples/capacity-allocation`) exposing `BPOP.solve` over HTTP.
+- `src/profiler/` — Observe (group trace rows into node outcomes) → Mine
+  (classify each node deterministic/non-deterministic by whether the same
+  `input_state` always yields the same `(decision.selected, result)`) →
+  Score (cost-weighted scoring per node) → Recommend (rule-based
+  suggestions), orchestrated by `run_pipeline()`.
+- `src/rawdata_gen/` — synthetic trace-data generator vendored from
+  [`agents_profile_rawdata_gen`](https://github.com/ipintotech-lab/agents_profile_rawdata_gen)
+  (copied source, not a dependency, since that repo has no packaging
+  metadata); `generate_configured(agent_count, actions_per_agent,
+  total_lines)` builds mock agent runs for the dashboard's "Generate sample
+  data" tab.
+- `src/api/` — a thin FastAPI wrapper exposing the raw solver (`/solve`,
+  `/examples/capacity-allocation`), the Observe→Recommend pipeline
+  (`/analyze`), the sample-data generator (`/generate`), and `/health`, plus
+  the dashboard UI at `/` (`src/api/static/index.html`).
 
 ## Usage
 
@@ -82,6 +106,27 @@ result = BPOP.solve(problem)
 print(result.explanation)
 ```
 
+Or run the Observe → Profile → Mine → Score → Recommend pipeline directly:
+
+```python
+from ingest.loader import load_traces
+from profiler import run_pipeline
+
+events = load_traces("data/sample_traces.jsonl")
+report = run_pipeline(events, workflow="cve-remediation-agent")
+```
+
+The same pipeline is reachable without writing any Python via the dashboard
+at `/` (upload a trace file, or use the "Generate sample data" tab to build
+one in-browser via `/generate`), or directly over HTTP:
+
+```bash
+curl -F file=@data/sample_traces.jsonl localhost:8000/analyze
+curl -X POST localhost:8000/generate \
+  -H 'content-type: application/json' \
+  -d '{"agent_count": 2, "actions_per_agent": [4, 6], "total_lines": 25}'
+```
+
 ## Setup
 
 ```bash
@@ -108,6 +153,8 @@ Or as an HTTP service:
 PYTHONPATH=src uvicorn api.main:app --reload
 curl localhost:8000/examples/capacity-allocation
 ```
+
+Then open `localhost:8000/` for the dashboard.
 
 Deployed on Railway at the project's service URL (`railpack.json` sets the
 start command; `requirements.txt` lists runtime deps directly, since
