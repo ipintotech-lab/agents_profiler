@@ -1,3 +1,4 @@
+from .normalize import normalize_raw_json
 from .to_bpop_problem import (
     DEFAULT_DEMAND_MODEL,
     DEMAND_MODELS,
@@ -16,6 +17,7 @@ __all__ = [
     "build_capacity_problem_from_traces",
     "compute_default_formula",
     "compute_formula_for_all_workflows",
+    "normalize_raw_json",
     "sensitivity_analysis",
     "usage_statistics",
 ]

@@ -26,7 +26,7 @@ from bpop import (
     Variable,
 )
 from bpop.result import BPOPResult
-from ingest import DEFAULT_DEMAND_MODEL
+from ingest import DEFAULT_DEMAND_MODEL, normalize_raw_json
 from ingest.trace_schema import TraceEvent
 from profiler import run_pipeline
 from rawdata_gen import (
@@ -123,12 +123,14 @@ def _parse_trace_events(raw: bytes) -> list[TraceEvent]:
     if not stripped:
         raise HTTPException(status_code=400, detail="uploaded file is empty")
     try:
-        if stripped.startswith("["):
-            rows = json.loads(stripped)
+        lines = [line for line in stripped.splitlines() if line.strip()]
+        if len(lines) > 1:
+            parsed = [json.loads(line) for line in lines]
         else:
-            rows = [json.loads(line) for line in stripped.splitlines() if line.strip()]
+            parsed = json.loads(stripped)
+        rows = normalize_raw_json(parsed)
         return [TraceEvent.model_validate(row) for row in rows]
-    except (json.JSONDecodeError, ValidationError) as exc:
+    except (json.JSONDecodeError, ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"could not parse trace file: {exc}") from exc
 
 
