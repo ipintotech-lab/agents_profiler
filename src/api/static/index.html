@@ -254,6 +254,18 @@
     <p class="lede">Worst-scoring actions first.</p>
     <div id="recContainer"></div>
 
+    <div id="validationSection" style="display:none">
+      <h2><span class="idx">06</span>Validate <span style="font-size:12px;color:var(--faint)">— expected vs. actual, against synthetic ground truth</span></h2>
+      <p class="lede">Only available for generated data, where each node's true determinism is actually known — compares the classifier's prediction against that known answer instead of just trusting its own output.</p>
+      <div class="stats" id="validationStats"></div>
+      <table id="validationTable"><thead><tr><th>Node</th><th class="num">True determinism_rate</th><th>Expected</th><th>Predicted</th><th>Outcome</th></tr></thead><tbody></tbody></table>
+
+      <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Calibration — determinism thresholds</h3>
+      <p class="lede">The three classification thresholds, grid-searched against this dataset's ground truth and ranked by fewest false negatives first, then accuracy, then lowest insufficient-evidence rate.</p>
+      <table id="calibrationTable"><thead><tr><th>Thresholds</th><th class="num">min_repeated_inputs</th><th class="num">min_repeat_coverage</th><th class="num">min_repeated_observations</th><th class="num">false negatives</th><th class="num">false positives</th><th class="num">accuracy</th><th class="num">insufficient evidence</th></tr></thead><tbody></tbody></table>
+      <pre class="code" id="calibrationNote"></pre>
+    </div>
+
   </div>
 
   <footer>B-POP Test Environment · formula overrides apply only to the Profile step; Mine/Score/Recommend are computed directly from the uploaded trace data.</footer>
@@ -484,6 +496,9 @@ form.addEventListener('submit', async (ev) => {
   if (mode === 'generate') {
     if (!generatedBlob) { showErr('Generate data first.'); updateRunBtnState(); runBtn.textContent = 'Run pipeline'; return; }
     fd.append('file', generatedBlob, 'generated.jsonl');
+    if (generatedSummary && generatedSummary.ground_truth) {
+      fd.append('ground_truth', JSON.stringify(generatedSummary.ground_truth));
+    }
   } else {
     const fileInput = document.getElementById('file');
     if (!fileInput.files.length) { showErr('Choose a trace file first.'); runBtn.disabled = false; runBtn.textContent = 'Run pipeline'; return; }
@@ -650,6 +665,50 @@ function render(data) {
         <div class="derivation">${esc(r.derivation)}</div>
       </div>
     </div>`).join('');
+
+  // Validate (only present when the run carried synthetic ground truth)
+  const validationSectionEl = document.getElementById('validationSection');
+  if (data.validation) {
+    validationSectionEl.style.display = '';
+    const v = data.validation;
+    document.getElementById('validationStats').innerHTML =
+      statCard(v.accuracy != null ? v.accuracy.toFixed(3) : '—', 'accuracy') +
+      statCard(v.precision != null ? v.precision.toFixed(3) : '—', 'precision') +
+      statCard(v.recall != null ? v.recall.toFixed(3) : '—', 'recall') +
+      statCard(`${v.false_negatives} FN / ${v.false_positives} FP`, 'confusion') +
+      statCard(`${(v.coverage * 100).toFixed(0)}%`, 'coverage');
+    document.querySelector('#validationTable tbody').innerHTML = v.per_node.map(n => `
+      <tr>
+        <td>${esc(n.node)}</td>
+        <td class="num">${n.determinism_rate.toFixed(2)}</td>
+        <td><span class="pill ${classificationPillClass(n.truth)}">${classificationLabel(n.truth)}</span></td>
+        <td><span class="pill ${classificationPillClass(n.predicted)}">${classificationLabel(n.predicted)}</span></td>
+        <td class="${n.outcome.startsWith('false') ? 'warn' : ''}">${esc(n.outcome.replace(/_/g, ' '))}</td>
+      </tr>`).join('');
+  } else {
+    validationSectionEl.style.display = 'none';
+  }
+
+  const calib = data.calibration;
+  if (calib) {
+    document.querySelector('#calibrationTable tbody').innerHTML = [
+      { ...calib.current_defaults, _label: 'current (shipped)' },
+      ...calib.leaderboard.map((c, i) => ({ ...c, _label: i === 0 ? 'best found' : `#${i + 1}` })),
+    ].map(c => `
+      <tr>
+        <td>${esc(c._label)}</td>
+        <td class="num">${c.min_repeated_inputs}</td>
+        <td class="num">${(c.min_repeat_coverage * 100).toFixed(0)}%</td>
+        <td class="num">${c.min_repeated_observations}</td>
+        <td class="num ${c.false_negatives > 0 ? 'warn' : ''}">${c.false_negatives}</td>
+        <td class="num">${c.false_positives}</td>
+        <td class="num">${c.accuracy != null ? c.accuracy.toFixed(3) : '—'}</td>
+        <td class="num">${(c.insufficient_evidence_rate * 100).toFixed(0)}%</td>
+      </tr>`).join('');
+    document.getElementById('calibrationNote').textContent = calib.improves_on_current
+      ? 'Best found beats the current shipped defaults on this dataset -- consider updating MIN_REPEATED_INPUTS/MIN_REPEAT_COVERAGE/MIN_REPEATED_OBSERVATIONS in determinism.py.'
+      : 'Current shipped defaults are already optimal (or tied) against this dataset within the searched grid -- no change indicated.';
+  }
 }
 
 function esc(s) {

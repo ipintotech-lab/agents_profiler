@@ -30,15 +30,24 @@ from ingest.trace_schema import TraceEvent
 # --- Evidence thresholds -----------------------------------------------
 # A node earns DETERMINISTIC only once ALL three hold. These are
 # intentionally visible/documented/testable rather than buried in logic.
-MIN_REPEATED_INPUTS = 10
+#
+# P5 calibration: grid-searched against several synthetic ground-truth
+# datasets via profiler/calibration.py. (3, 0.1, 10) tied-or-beat the
+# previous defaults (10, 0.3, 30) on every dataset tried -- same 0 false
+# negatives/positives, but roughly double the classified-node coverage --
+# so it was adopted as the MVP default. This is a grid-search optimum on
+# the datasets tried, not a proof it's optimal everywhere; if a workflow's
+# traces start producing false negatives, re-run the calibrator against
+# that workflow's own ground truth before raising these back up.
+MIN_REPEATED_INPUTS = 3
 """Minimum number of *distinct* canonical inputs that must each have
 been observed more than once."""
 
-MIN_REPEAT_COVERAGE = 0.30
+MIN_REPEAT_COVERAGE = 0.1
 """Minimum fraction of all observations that belong to a repeated input:
 ``repeated_observations / occurrences``."""
 
-MIN_REPEATED_OBSERVATIONS = 30
+MIN_REPEATED_OBSERVATIONS = 10
 """Minimum total number of observations belonging to repeated inputs."""
 
 

@@ -18,6 +18,7 @@ from ingest import (
 )
 from ingest.trace_schema import TraceEvent
 
+from .calibration import calibrate_determinism_thresholds
 from .determinism import Classification
 from .mine import mine, observe, recommend, score
 from .validation import validate
@@ -173,5 +174,6 @@ def run_pipeline(
 
     if ground_truth:
         report["validation"] = validate(predictions, ground_truth).to_dict()
+        report["calibration"] = calibrate_determinism_thresholds(events, selected_workflow, ground_truth)
 
     return report
