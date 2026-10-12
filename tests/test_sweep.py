@@ -1,0 +1,40 @@
+from fastapi.testclient import TestClient
+
+from api.main import app
+from profiler.sweep import TOTAL_LINES_STEPS, _build_cases, run_sweep
+
+
+def test_build_cases_covers_every_option_of_every_dimension():
+    cases = _build_cases()
+    groups = {c["group"] for c in cases}
+    assert groups == {"baseline", "agent_count", "variance", "demand_model", "total_lines", "formula_override"}
+
+    agent_counts = {c["config"]["agent_count"] for c in cases if c["group"] == "agent_count"}
+    assert agent_counts == {1, 2, 3}
+
+    variances = {c["config"]["variance"] for c in cases if c["group"] == "variance"}
+    assert variances == {"low", "mid", "high"}
+
+    demand_models = {c["config"]["demand_model"] for c in cases if c["group"] == "demand_model"}
+    assert demand_models == {"p50", "p75", "p90", "p95", "p99", "max"}
+
+    total_lines = {c["config"]["total_lines"] for c in cases if c["group"] == "total_lines"}
+    assert total_lines == set(TOTAL_LINES_STEPS)
+
+
+def test_run_sweep_all_cases_pass_and_report_timing():
+    result = run_sweep(seed=1)
+    assert result["num_cases"] == len(result["results"])
+    assert result["all_passed"], [r for r in result["results"] if not r["passed"]]
+    for row in result["results"]:
+        assert row["elapsed_ms"] >= 0
+        assert row["num_events"] > 0
+
+
+def test_run_sweep_endpoint_returns_sweep_report():
+    client = TestClient(app)
+    resp = client.post("/run_sweep", params={"seed": 2})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["all_passed"]
+    assert body["num_cases"] == len(body["results"])

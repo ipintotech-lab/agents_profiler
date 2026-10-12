@@ -28,7 +28,7 @@ from bpop import (
 from bpop.result import BPOPResult
 from ingest import DEFAULT_DEMAND_MODEL, normalize_raw_json
 from ingest.trace_schema import TraceEvent
-from profiler import run_pipeline
+from profiler import run_pipeline, run_sweep
 from rawdata_gen import (
     generate_configured,
     verify_seed_range_reproducibility,
@@ -231,6 +231,15 @@ def validate_seed_range(req: ValidateSeedRangeRequest) -> dict:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/run_sweep")
+def run_sweep_endpoint(seed: int = 1) -> dict:
+    """Regression/stress-test the pipeline across a grid of agent counts,
+    variances, demand models, total_lines volumes (1000-10000), and
+    formula overrides -- a QA tool for the dashboard's "Run tests" tab,
+    not something an end user tunes by hand."""
+    return run_sweep(seed=seed)
 
 
 @app.get("/examples/capacity-allocation")

@@ -123,6 +123,7 @@
   <div class="modetabs">
     <div class="modetab active" id="tabUpload" data-mode="upload">Upload file</div>
     <div class="modetab" id="tabGenerate" data-mode="generate">Generate sample data</div>
+    <div class="modetab" id="tabSweep" data-mode="sweep">Run tests</div>
   </div>
 
   <form class="controls" id="form" style="border-top-left-radius:0">
@@ -187,7 +188,19 @@
       <div class="gensummary" id="validateRangeSummary"></div>
     </div>
 
-    <div class="row" style="margin-top:14px">
+    <div id="sweepPanel" hidden>
+      <div class="genrow">
+        <div class="field">
+          <label for="sweepSeed">Seed <span class="hint">reused across every case, for an apples-to-apples comparison</span></label>
+          <input type="number" id="sweepSeed" step="1" value="1">
+        </div>
+      </div>
+      <div class="row" style="margin-bottom:0">
+        <button type="button" class="ghost" id="sweepBtn">Run sweep</button>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:14px" id="formulaRow">
       <div class="field">
         <label for="unit_cost">unit_cost <span class="hint">leader's $/capacity unit</span></label>
         <input type="number" step="any" id="unit_cost" name="unit_cost" placeholder="auto from data">
@@ -212,7 +225,7 @@
         </select>
       </div>
     </div>
-    <div class="row" style="margin-bottom:0">
+    <div class="row" style="margin-bottom:0" id="submitRow">
       <button type="submit" id="runBtn">Run pipeline</button>
       <button type="button" class="ghost" id="resetBtn">Reset formula to defaults</button>
     </div>
@@ -268,6 +281,13 @@
 
   </div>
 
+  <div id="sweepReport" style="display:none">
+    <h2><span class="idx">S</span>Run tests <span style="font-size:12px;color:var(--faint)">— sweep across agent count, variance, demand_model, total_lines (1k&ndash;10k), and formula overrides</span></h2>
+    <p class="lede">Generates a fresh synthetic dataset per case, holding every other dimension at a fixed baseline, and runs it through the full pipeline — a regression/stress test of the pipeline itself, not something to tune by hand.</p>
+    <div class="stats" id="sweepStats"></div>
+    <table id="sweepTable"><thead><tr><th>Group</th><th>Case</th><th>Status</th><th class="num">events</th><th class="num">elapsed (ms)</th><th class="num">x*</th><th class="num">y*</th><th class="num">accuracy</th><th>error</th></tr></thead><tbody></tbody></table>
+  </div>
+
   <footer>B-POP Test Environment · formula overrides apply only to the Profile step; Mine/Score/Recommend are computed directly from the uploaded trace data.</footer>
 </div>
 
@@ -310,8 +330,14 @@ const uploadPanel = document.getElementById('uploadPanel');
 const generatePanel = document.getElementById('generatePanel');
 const tabUpload = document.getElementById('tabUpload');
 const tabGenerate = document.getElementById('tabGenerate');
+const tabSweep = document.getElementById('tabSweep');
 const genSummaryEl = document.getElementById('genSummary');
 const agentCountEl = document.getElementById('agentCount');
+const sweepPanel = document.getElementById('sweepPanel');
+const formulaRow = document.getElementById('formulaRow');
+const submitRow = document.getElementById('submitRow');
+const sweepReportEl = document.getElementById('sweepReport');
+let lastSweepResult = null;
 
 function updateRunBtnState() {
   const blocked = mode === 'generate' && !generatedBlob;
@@ -323,12 +349,20 @@ function setMode(m) {
   mode = m;
   tabUpload.classList.toggle('active', m === 'upload');
   tabGenerate.classList.toggle('active', m === 'generate');
+  tabSweep.classList.toggle('active', m === 'sweep');
   uploadPanel.hidden = m !== 'upload';
   generatePanel.hidden = m !== 'generate';
+  sweepPanel.hidden = m !== 'sweep';
+  formulaRow.hidden = m === 'sweep';
+  submitRow.hidden = m === 'sweep';
+  pipelineEl.style.display = m === 'sweep' ? 'none' : '';
+  reportEl.style.display = m === 'sweep' ? 'none' : (reportEl.dataset.hasRun ? 'block' : 'none');
+  sweepReportEl.style.display = m === 'sweep' && lastSweepResult ? 'block' : 'none';
   updateRunBtnState();
 }
 tabUpload.addEventListener('click', () => setMode('upload'));
 tabGenerate.addEventListener('click', () => setMode('generate'));
+tabSweep.addEventListener('click', () => setMode('sweep'));
 
 function updateAgentFields() {
   const n = parseInt(agentCountEl.value, 10);
@@ -460,6 +494,49 @@ downloadBtn.addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 
+const sweepBtn = document.getElementById('sweepBtn');
+sweepBtn.addEventListener('click', async () => {
+  errEl.style.display = 'none';
+  sweepBtn.disabled = true;
+  sweepBtn.textContent = 'Running sweep…';
+  try {
+    const seedRaw = document.getElementById('sweepSeed').value;
+    const seed = seedRaw !== '' ? parseInt(seedRaw, 10) : 1;
+    const res = await fetch(`/run_sweep?seed=${seed}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Sweep failed.');
+    lastSweepResult = data;
+    renderSweep(data);
+    sweepReportEl.style.display = 'block';
+  } catch (e) {
+    showErr(e.message || String(e));
+  } finally {
+    sweepBtn.disabled = false;
+    sweepBtn.textContent = 'Run sweep';
+  }
+});
+
+function renderSweep(data) {
+  document.getElementById('sweepStats').innerHTML =
+    statCard(data.num_cases, 'cases') +
+    statCard(data.num_passed, 'passed') +
+    statCard(data.num_failed, 'failed') +
+    statCard(data.all_passed ? 'yes' : 'no', 'all passed') +
+    statCard(data.seed, 'seed');
+  document.querySelector('#sweepTable tbody').innerHTML = data.results.map(r => `
+    <tr>
+      <td>${esc(r.group)}</td>
+      <td>${esc(r.label)}</td>
+      <td class="${r.passed ? 'good' : 'bad'}">${r.passed ? 'pass' : 'FAIL'}</td>
+      <td class="num">${r.num_events ?? '—'}</td>
+      <td class="num">${r.elapsed_ms != null ? r.elapsed_ms.toFixed(1) : '—'}</td>
+      <td class="num">${r.x && r.x.x != null ? r.x.x.toFixed(3) : '—'}</td>
+      <td class="num">${r.y && r.y.y != null ? r.y.y.toFixed(3) : '—'}</td>
+      <td class="num">${r.accuracy != null ? r.accuracy.toFixed(3) : '—'}</td>
+      <td class="${r.error ? 'bad' : ''}">${r.error ? esc(r.error) : ''}</td>
+    </tr>`).join('');
+}
+
 // any change to the generation inputs invalidates the last generated batch,
 // so "Run pipeline" can't silently run stale data
 generatePanel.addEventListener('input', () => {
@@ -539,6 +616,7 @@ function statCard(value, label) {
 
 function render(data) {
   reportEl.style.display = 'block';
+  reportEl.dataset.hasRun = '1';
 
   // Observe
   const ob = data.observe;
