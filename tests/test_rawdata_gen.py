@@ -5,7 +5,11 @@ from fastapi.testclient import TestClient
 
 from api.main import app
 from ingest.trace_schema import TraceEvent
-from rawdata_gen import generate_configured, verify_seed_reproducibility
+from rawdata_gen import (
+    generate_configured,
+    verify_seed_range_reproducibility,
+    verify_seed_reproducibility,
+)
 from rawdata_gen.agents.common import to_jsonl
 
 
@@ -217,4 +221,48 @@ def test_validate_seed_endpoint_resolves_a_seed_when_none_given():
 def test_validate_seed_endpoint_rejects_bad_action_count():
     client = TestClient(app)
     resp = client.post("/validate_seed", json={"agent_count": 1, "actions_per_agent": [2], "seed": 1})
+    assert resp.status_code == 400
+
+
+def test_verify_seed_range_reproducibility_covers_every_seed_in_range():
+    result = verify_seed_range_reproducibility(1, [4], None, "mid", seed_start=1, seed_end=5)
+    assert result["seed_start"] == 1
+    assert result["seed_end"] == 5
+    assert result["count"] == 5
+    assert result["all_reproducible"] is True
+    assert result["failures"] == []
+    assert [r["seed"] for r in result["results"]] == [1, 2, 3, 4, 5]
+
+
+def test_verify_seed_range_reproducibility_rejects_inverted_range():
+    with pytest.raises(ValueError):
+        verify_seed_range_reproducibility(1, [4], None, "mid", seed_start=10, seed_end=5)
+
+
+def test_validate_seed_range_endpoint_default_range_is_1_to_30():
+    client = TestClient(app)
+    resp = client.post("/validate_seed_range", json={"agent_count": 1, "actions_per_agent": [4]})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["seed_start"] == 1
+    assert data["seed_end"] == 30
+    assert data["count"] == 30
+    assert data["all_reproducible"] is True
+
+
+def test_validate_seed_range_endpoint_accepts_custom_range():
+    client = TestClient(app)
+    resp = client.post(
+        "/validate_seed_range",
+        json={"agent_count": 1, "actions_per_agent": [4], "seed_start": 100, "seed_end": 102},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 3
+    assert [r["seed"] for r in data["results"]] == [100, 101, 102]
+
+
+def test_validate_seed_range_endpoint_rejects_bad_action_count():
+    client = TestClient(app)
+    resp = client.post("/validate_seed_range", json={"agent_count": 1, "actions_per_agent": [2]})
     assert resp.status_code == 400

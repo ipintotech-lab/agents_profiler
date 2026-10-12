@@ -29,7 +29,11 @@ from bpop.result import BPOPResult
 from ingest import DEFAULT_DEMAND_MODEL
 from ingest.trace_schema import TraceEvent
 from profiler import run_pipeline
-from rawdata_gen import generate_configured, verify_seed_reproducibility
+from rawdata_gen import (
+    generate_configured,
+    verify_seed_range_reproducibility,
+    verify_seed_reproducibility,
+)
 from rawdata_gen.agents.common import to_jsonl
 from rawdata_gen.generate_traces import build_dataset_manifest
 
@@ -40,6 +44,15 @@ class GenerateRequest(BaseModel):
     total_lines: int | None = None
     variance: str = "mid"
     seed: int | None = None
+
+
+class ValidateSeedRangeRequest(BaseModel):
+    agent_count: int
+    actions_per_agent: list[int]
+    total_lines: int | None = None
+    variance: str = "mid"
+    seed_start: int = 1
+    seed_end: int = 30
 
 
 app = FastAPI(
@@ -196,6 +209,19 @@ def validate_seed(req: GenerateRequest) -> dict:
     try:
         return verify_seed_reproducibility(
             req.agent_count, req.actions_per_agent, req.total_lines, req.variance, seed
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/validate_seed_range")
+def validate_seed_range(req: ValidateSeedRangeRequest) -> dict:
+    """``verify_seed_reproducibility`` across every seed in
+    [seed_start, seed_end] (default 1-30), so reproducibility is checked
+    as a batch rather than trusting a single sampled seed."""
+    try:
+        return verify_seed_range_reproducibility(
+            req.agent_count, req.actions_per_agent, req.total_lines, req.variance, req.seed_start, req.seed_end
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

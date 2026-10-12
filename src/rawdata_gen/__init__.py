@@ -2,6 +2,14 @@
 https://github.com/ipintotech-lab/agents_profile_rawdata_gen so the
 dashboard can generate sample trace data without an external dependency.
 """
-from .generate_traces import generate_configured, verify_seed_reproducibility
+from .generate_traces import (
+    generate_configured,
+    verify_seed_range_reproducibility,
+    verify_seed_reproducibility,
+)
 
-__all__ = ["generate_configured", "verify_seed_reproducibility"]
+__all__ = [
+    "generate_configured",
+    "verify_seed_range_reproducibility",
+    "verify_seed_reproducibility",
+]

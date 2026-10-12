@@ -120,6 +120,35 @@ def verify_seed_reproducibility(
     }
 
 
+def verify_seed_range_reproducibility(
+    agent_count: int,
+    actions_per_agent: list[int],
+    total_lines: int | None,
+    variance: str,
+    seed_start: int = 1,
+    seed_end: int = 30,
+) -> dict:
+    """``verify_seed_reproducibility`` for every seed in
+    ``[seed_start, seed_end]`` (inclusive, default 1-30) -- passing for one
+    seed doesn't establish that reproducibility holds generally, so this
+    checks a batch instead of trusting a single sample."""
+    if seed_end < seed_start:
+        raise ValueError("seed_end must be >= seed_start")
+    results = [
+        verify_seed_reproducibility(agent_count, actions_per_agent, total_lines, variance, seed)
+        for seed in range(seed_start, seed_end + 1)
+    ]
+    failures = [r["seed"] for r in results if not r["reproducible"]]
+    return {
+        "seed_start": seed_start,
+        "seed_end": seed_end,
+        "count": len(results),
+        "all_reproducible": not failures,
+        "failures": failures,
+        "results": results,
+    }
+
+
 def build_dataset_manifest(runs: list[Run], seed: int | None = None) -> dict:
     """Dataset-level metadata for a generated batch of runs: the
     ground-truth manifest plus identity fields (``dataset_id``,
