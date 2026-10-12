@@ -138,6 +138,21 @@ def test_analyze_endpoint_accepts_wrapped_json_upload():
     assert resp.json()["observe"]["num_events"] == 5
 
 
+def test_analyze_endpoint_accepts_pretty_printed_multiline_json_array():
+    # A pretty-printed JSON array has many non-empty lines, same as real
+    # JSONL -- must still be parsed as ONE document, not one-value-per-line.
+    client = TestClient(app)
+    events = [_base_event(run_id=f"r{i}", model="demo-llm") for i in range(5)]
+    pretty = json.dumps(events, indent=2)
+    assert pretty.count("\n") > 5
+    resp = client.post(
+        "/analyze",
+        files={"file": ("pretty.json", pretty, "application/json")},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["observe"]["num_events"] == 5
+
+
 def test_analyze_endpoint_rejects_file_with_unmappable_record():
     client = TestClient(app)
     bad = [{"trace_id": "t1", "run_id": "r1", "event_type": "action", "node": "step"}]
