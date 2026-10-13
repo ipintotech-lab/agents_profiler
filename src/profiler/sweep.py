@@ -84,7 +84,7 @@ def _build_cases() -> list[dict]:
     return cases
 
 
-def _events_for_config(config: dict, seed: int) -> tuple[list[TraceEvent], dict]:
+def generate_dataset_for_config(config: dict, seed: int) -> tuple[list[TraceEvent], dict]:
     rng = Random(seed)
     runs = generate_configured(
         config["agent_count"], config["actions_per_agent"], config["total_lines"], rng=rng, variance=config["variance"]
@@ -111,7 +111,7 @@ def run_sweep(seed: int = 1) -> dict:
             "config": dict(config),
         }
         try:
-            events, manifest = _events_for_config(config, seed)
+            events, manifest = generate_dataset_for_config(config, seed)
             report = run_pipeline(
                 events,
                 unit_cost=config["unit_cost"],

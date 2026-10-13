@@ -28,7 +28,7 @@ from bpop import (
 from bpop.result import BPOPResult
 from ingest import DEFAULT_DEMAND_MODEL, normalize_raw_json
 from ingest.trace_schema import TraceEvent
-from profiler import run_pipeline, run_sweep
+from profiler import run_pipeline, run_poc, run_sweep
 from rawdata_gen import (
     generate_configured,
     verify_seed_range_reproducibility,
@@ -240,6 +240,29 @@ def run_sweep_endpoint(seed: int = 1) -> dict:
     formula overrides -- a QA tool for the dashboard's "Run tests" tab,
     not something an end user tunes by hand."""
     return run_sweep(seed=seed)
+
+
+@app.post("/poc/run")
+def run_poc_endpoint(
+    calibration_seed_count: int = 5,
+    validation_seed_count: int = 5,
+    calibration_sample_size: int = 2000,
+) -> dict:
+    """Run the sample-size stabilization POC (see profiler/experiment.py)
+    over HTTP. Defaults to a small number of seeds (5 + 5, vs. the
+    Python-callable ``run_poc()``'s rigorous 30 + 30 default) purely so
+    an HTTP call stays responsive -- the full 30-seed run is meant to be
+    invoked directly from Python/tests, not through this endpoint."""
+    calibration_seeds = tuple(range(1, 1 + calibration_seed_count))
+    validation_seeds = tuple(range(101, 101 + validation_seed_count))
+    try:
+        return run_poc(
+            calibration_seeds=calibration_seeds,
+            validation_seeds=validation_seeds,
+            calibration_sample_size=calibration_sample_size,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/examples/capacity-allocation")
