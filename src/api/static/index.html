@@ -61,6 +61,14 @@
   .stat .d { color: var(--dim); font-size: 11px; line-height: 1.45; margin-top: 8px; }
   .stats.explained { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 
+  .barrow { display: flex; align-items: center; gap: 14px; margin: 5px 0; flex-wrap: wrap; }
+  .barrow .bl { width: 190px; flex-shrink: 0; color: var(--dim); font-size: 12px; }
+  .barrow .bl b { color: var(--ink); font-weight: 400; }
+  .bartrack { flex: 1; min-width: 120px; height: 16px; background: #0a0d0b; border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
+  .barfill { height: 100%; background: linear-gradient(90deg, var(--lime), var(--green)); }
+  .barfill.saved { background: linear-gradient(90deg, var(--cyan), #2298ab); }
+  .barval { width: 120px; flex-shrink: 0; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); font-size: 12.5px; }
+
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 10px 0; }
   th { text-align: left; color: var(--faint); font-weight: 400; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; padding: 8px 10px; border-bottom: 1px solid var(--line); }
   td { padding: 8px 10px; border-bottom: 1px solid rgba(38,48,42,.6); color: var(--dim); }
@@ -339,6 +347,9 @@
     <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 5 — modeled cost savings <span style="font-size:12px;color:var(--faint)">— synthetic/modeled, not measured production savings</span></h3>
     <p class="lede">Assumes only nodes classified DETERMINISTIC can be cached to one call per unique input; NON_DETERMINISTIC and INSUFFICIENT_EVIDENCE nodes are modeled as zero savings — a deliberately conservative floor, not a claim that non-deterministic nodes have no optimization value.</p>
     <div class="stats explained" id="pocCostStats"></div>
+    <div id="pocCostBars" style="margin:18px 0 10px"></div>
+    <table id="pocCostTable"><thead><tr><th>node</th><th>classification</th><th class="num">occurrences</th><th class="num">unique inputs</th><th class="num">cost before</th><th class="num">cost after</th><th class="num">$ saved</th></tr></thead><tbody></tbody></table>
+    <pre class="code" id="pocCostExplain"></pre>
   </div>
 
   <footer>B-POP Test Environment · formula overrides apply only to the Profile step; Mine/Score/Recommend are computed directly from the uploaded trace data.</footer>
@@ -718,6 +729,45 @@ function renderPoc(data) {
       'the before/after difference in the same modeled cost units — the raw amount this caching strategy would avoid.') +
     statCardExplained(p5.estimated_savings_pct != null ? `${(p5.estimated_savings_pct * 100).toFixed(1)}%` : '—', 'savings %',
       'savings as a percentage of the before cost — the headline number for "how much would caching deterministic nodes save."');
+
+  const before5 = p5.estimated_cost_before ?? 0;
+  const after5 = p5.estimated_cost_after ?? 0;
+  const savedPct5 = before5 ? ((before5 - after5) / before5 * 100) : 0;
+  document.getElementById('pocCostBars').innerHTML = `
+    <div class="barrow">
+      <div class="bl"><b>Modeled cost (no caching)</b></div>
+      <div class="bartrack"><div class="barfill" style="width:100%"></div></div>
+      <div class="barval">${before5.toFixed(2)}</div>
+    </div>
+    <div class="barrow">
+      <div class="bl">saved — ${savedPct5.toFixed(1)}%</div>
+      <div class="bartrack"><div class="barfill saved" style="width:${Math.max(0, Math.min(100, savedPct5))}%"></div></div>
+      <div class="barval">−${(before5 - after5).toFixed(2)}</div>
+    </div>`;
+
+  const nodes = (p5.per_node ?? []).map(n => ({ ...n, saved: n.estimated_cost_before - n.estimated_cost_after }))
+    .sort((a, b) => b.saved - a.saved);
+  document.querySelector('#pocCostTable tbody').innerHTML = nodes.map(n => `
+    <tr>
+      <td>${esc(n.agent)}/${esc(n.node)}</td>
+      <td><span class="pill ${classificationPillClass(n.classification)}">${classificationLabel(n.classification)}</span></td>
+      <td class="num">${n.occurrences}</td>
+      <td class="num">${n.unique_inputs}</td>
+      <td class="num">${n.estimated_cost_before.toFixed(3)}</td>
+      <td class="num">${n.estimated_cost_after.toFixed(3)}</td>
+      <td class="num ${n.saved > 0 ? 'good' : ''}">${n.saved.toFixed(3)}</td>
+    </tr>`).join('') + (nodes.length ? `
+    <tr>
+      <td><b>Total</b></td><td></td>
+      <td class="num"><b>${nodes.reduce((s, n) => s + n.occurrences, 0)}</b></td>
+      <td class="num"><b>${nodes.reduce((s, n) => s + n.unique_inputs, 0)}</b></td>
+      <td class="num"><b>${before5.toFixed(3)}</b></td>
+      <td class="num"><b>${after5.toFixed(3)}</b></td>
+      <td class="num good"><b>${(before5 - after5).toFixed(3)}</b></td>
+    </tr>` : '');
+  document.getElementById('pocCostExplain').textContent =
+    `per-node breakdown: one row per profiled node — its modeled cost if every occurrence paid for its own LLM call ("cost before"), vs. only unique inputs paying once with the rest served from cache ("cost after") — only DETERMINISTIC nodes get this treatment, so non-deterministic/insufficient-evidence rows show $0 saved by design.\n` +
+    (p5.assumption ?? '');
 }
 
 // any change to the generation inputs invalidates the last generated batch,
