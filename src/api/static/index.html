@@ -327,6 +327,7 @@
 
     <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 1 — calibration</h3>
     <p class="lede">Grid-searches the three determinism thresholds (<code>min_repeated_inputs</code>, <code>min_repeat_coverage</code>, <code>min_repeated_observations</code>) across every calibration seed together, and compares the best-scoring combination against the thresholds this app currently ships with. "Selected" is what Phase 2 onward actually uses — not automatically applied to the live defaults.</p>
+    <div id="pocCalibrationBars" style="margin:18px 0 10px"></div>
     <table id="pocCalibrationTable"><thead><tr><th>Thresholds</th><th class="num">min_repeated_inputs</th><th class="num">min_repeat_coverage</th><th class="num">min_repeated_observations</th><th class="num">false negatives</th><th class="num">accuracy</th></tr></thead><tbody></tbody></table>
     <pre class="code" id="pocCalibrationExplain"></pre>
 
@@ -663,6 +664,34 @@ function renderPoc(data) {
         ? `modeled reduction in LLM call cost if every node classified DETERMINISTIC were cached to one call per unique input — a conservative, synthetic estimate, not a measured production number.`
         : '—');
 
+  const accBefore1 = p1.current_defaults?.mean_accuracy ?? 0;
+  const accAfter1 = p1.selected?.mean_accuracy ?? 0;
+  const accDeltaPct1 = accBefore1 ? ((accAfter1 - accBefore1) / accBefore1 * 100) : 0;
+  const fnBefore1 = p1.current_defaults?.total_false_negatives ?? 0;
+  const fnAfter1 = p1.selected?.total_false_negatives ?? 0;
+  const fnReducedPct1 = fnBefore1 ? ((fnBefore1 - fnAfter1) / fnBefore1 * 100) : 0;
+  document.getElementById('pocCalibrationBars').innerHTML = `
+    <div class="barrow">
+      <div class="bl"><b>Mean accuracy (current defaults)</b></div>
+      <div class="bartrack"><div class="barfill" style="width:100%"></div></div>
+      <div class="barval">${(accBefore1 * 100).toFixed(1)}%</div>
+    </div>
+    <div class="barrow">
+      <div class="bl">${accDeltaPct1 >= 0 ? 'gained' : 'lost'} — ${Math.abs(accDeltaPct1).toFixed(1)}%</div>
+      <div class="bartrack"><div class="barfill saved" style="width:${Math.max(0, Math.min(100, Math.abs(accDeltaPct1)))}%"></div></div>
+      <div class="barval">${accDeltaPct1 >= 0 ? '+' : '−'}${Math.abs(accAfter1 - accBefore1).toFixed(3)}</div>
+    </div>
+    <div class="barrow">
+      <div class="bl"><b>False negatives (current defaults)</b></div>
+      <div class="bartrack"><div class="barfill" style="width:100%"></div></div>
+      <div class="barval">${fnBefore1}</div>
+    </div>
+    <div class="barrow">
+      <div class="bl">${fnReducedPct1 >= 0 ? 'reduced' : 'increased'} — ${Math.abs(fnReducedPct1).toFixed(1)}%</div>
+      <div class="bartrack"><div class="barfill saved" style="width:${Math.max(0, Math.min(100, Math.abs(fnReducedPct1)))}%"></div></div>
+      <div class="barval">${fnReducedPct1 >= 0 ? '−' : '+'}${Math.abs(fnBefore1 - fnAfter1)}</div>
+    </div>`;
+
   const rows = [
     { label: 'selected', t: p1.selected },
     { label: 'current defaults', t: p1.current_defaults },
@@ -678,6 +707,7 @@ function renderPoc(data) {
     </tr>`).join('');
   const improves = p1.improves_on_current ?? (p1.selected?.total_false_negatives != null && p1.current_defaults?.total_false_negatives != null && p1.selected.total_false_negatives < p1.current_defaults.total_false_negatives);
   document.getElementById('pocCalibrationExplain').textContent =
+    `bars above: before = currently shipped defaults, after = thresholds Phase 1 selected on this run — same before/after framing as the modeled-savings bars in Phase 5, applied here to accuracy and false negatives instead of cost.\n` +
     `min_repeated_inputs: how many times an input must repeat before a node is even eligible to be judged deterministic.\n` +
     `min_repeat_coverage: what fraction of a node's observed inputs must be repeats (guards against judging a node on mostly-unique traffic).\n` +
     `min_repeated_observations: how many repeated-input observations are required before the determinism call is trusted.\n` +
