@@ -58,6 +58,8 @@
   .stat { background: var(--panel); padding: 16px 18px; }
   .stat .v { font-size: 24px; color: var(--ink); font-family: var(--serif); }
   .stat .k { color: var(--faint); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; margin-top: 3px; }
+  .stat .d { color: var(--dim); font-size: 11px; line-height: 1.45; margin-top: 8px; }
+  .stats.explained { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 10px 0; }
   th { text-align: left; color: var(--faint); font-weight: 400; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; padding: 8px 10px; border-bottom: 1px solid var(--line); }
@@ -204,19 +206,18 @@
     <div id="pocPanel" hidden>
       <div class="genrow">
         <div class="field">
-          <label for="pocCalSeeds">Calibration seeds <span class="hint">more = slower but more rigorous</span></label>
+          <label for="pocCalSeeds">Calibration seeds <span class="hint">how many independent datasets vote on the best determinism thresholds — more seeds = a more trustworthy pick, but a slower run</span></label>
           <input type="number" id="pocCalSeeds" min="1" step="1" value="5">
         </div>
         <div class="field">
-          <label for="pocValSeeds">Validation seeds <span class="hint">disjoint from calibration seeds</span></label>
+          <label for="pocValSeeds">Validation seeds <span class="hint">how many independent datasets the frozen thresholds are then tested on — always a disjoint seed range from calibration, so the thresholds are never graded on data they were picked from</span></label>
           <input type="number" id="pocValSeeds" min="1" step="1" value="5">
         </div>
         <div class="field">
-          <label for="pocCalSampleSize">Calibration sample size</label>
+          <label for="pocCalSampleSize">Calibration sample size <span class="hint">trace lines generated per calibration seed when picking the thresholds</span></label>
           <input type="number" id="pocCalSampleSize" min="20" step="20" value="2000">
         </div>
       </div>
-      <p class="lede" style="margin-top:0">Runs the sample-size stabilization experiment over HTTP with a small seed count by default, for responsiveness — the rigorous 30+30-seed run this shipped with is only run directly from Python/tests.</p>
       <div class="row" style="margin-bottom:0">
         <button type="button" class="ghost" id="pocBtn">Run POC</button>
       </div>
@@ -312,27 +313,32 @@
 
   <div id="pocReport" style="display:none">
     <h2><span class="idx">P</span>POC <span style="font-size:12px;color:var(--faint)">— sample-size stabilization experiment</span></h2>
-    <p class="lede">Synthetic ground truth → profiler → measured classification correctness → stable parameter configuration → increasing sample sizes → the smallest sample size beyond which more data gives little improvement (not the sample size that maximizes accuracy) → stable recommendations → modeled cost value. Calibration and validation use disjoint seed ranges; thresholds are frozen before Phase 2 runs.</p>
+    <p class="lede">This answers one question: <strong>how much synthetic trace data does the profiler actually need before its determinism calls stop changing?</strong> It is not looking for the sample size with the highest accuracy — it is looking for the <em>smallest</em> sample size beyond which feeding it more data stops meaningfully improving the result. Below that point, trust the numbers less; above it, more data is just cost with no added benefit.</p>
+    <p class="lede">How it gets there, phase by phase: <strong>(1)</strong> pick the best determinism thresholds by voting across several independent "calibration" datasets; <strong>(2)</strong> freeze those thresholds and re-run the profiler at increasing sample sizes on a completely separate set of "validation" datasets, watching where accuracy/recall/coverage level off; <strong>(3)</strong> check that the profiler's worst-offender recommendation is stable at that sample size, not a coin flip between seeds; <strong>(4)</strong> sanity-check the resulting B-POP capacity recommendation against the same workload; <strong>(5)</strong> model what the measured determinism rate would be worth in avoided LLM calls. Calibration and validation always use non-overlapping seeds, so the thresholds are never graded on the same data they were chosen from.</p>
     <div class="stats" id="pocConclusionStats"></div>
 
     <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 1 — calibration</h3>
-    <p class="lede">Grid-searched thresholds vs. the currently shipped defaults, across the calibration seed range.</p>
+    <p class="lede">Grid-searches the three determinism thresholds (<code>min_repeated_inputs</code>, <code>min_repeat_coverage</code>, <code>min_repeated_observations</code>) across every calibration seed together, and compares the best-scoring combination against the thresholds this app currently ships with. "Selected" is what Phase 2 onward actually uses — not automatically applied to the live defaults.</p>
     <table id="pocCalibrationTable"><thead><tr><th>Thresholds</th><th class="num">min_repeated_inputs</th><th class="num">min_repeat_coverage</th><th class="num">min_repeated_observations</th><th class="num">false negatives</th><th class="num">accuracy</th></tr></thead><tbody></tbody></table>
+    <pre class="code" id="pocCalibrationExplain"></pre>
 
     <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 2 — sample-size curve</h3>
-    <p class="lede">Frozen thresholds, increasing sample sizes, validation seeds only.</p>
+    <p class="lede">Thresholds are frozen at the Phase 1 "selected" values and never change again below. Each row regenerates fresh validation datasets at that sample size and reports the average classification quality across all validation seeds.</p>
     <table id="pocCurveTable"><thead><tr><th class="num">sample size</th><th class="num">mean accuracy</th><th class="num">accuracy std</th><th class="num">mean recall</th><th class="num">mean coverage</th><th class="num">insufficient evidence rate</th></tr></thead><tbody></tbody></table>
     <pre class="code" id="pocStabilizationNote"></pre>
 
     <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 3 — recommendation stability</h3>
-    <div class="stats" id="pocStabilityStats"></div>
+    <p class="lede">At the stabilization sample size, does the profiler's "fix this first" recommendation actually hold up across different random datasets, or does it reshuffle seed to seed?</p>
+    <div class="stats explained" id="pocStabilityStats"></div>
 
     <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 4 — B-POP evaluation</h3>
-    <div class="stats" id="pocBpopStats"></div>
+    <p class="lede">A separate check from classification accuracy above: does the B-POP leader/follower solve recommend a sensible capacity for the same workload at the stabilization sample size?</p>
+    <div class="stats explained" id="pocBpopStats"></div>
     <pre class="code" id="pocBpopNote"></pre>
 
     <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 5 — modeled cost savings <span style="font-size:12px;color:var(--faint)">— synthetic/modeled, not measured production savings</span></h3>
-    <div class="stats" id="pocCostStats"></div>
+    <p class="lede">Assumes only nodes classified DETERMINISTIC can be cached to one call per unique input; NON_DETERMINISTIC and INSUFFICIENT_EVIDENCE nodes are modeled as zero savings — a deliberately conservative floor, not a claim that non-deterministic nodes have no optimization value.</p>
+    <div class="stats explained" id="pocCostStats"></div>
   </div>
 
   <footer>B-POP Test Environment · formula overrides apply only to the Profile step; Mine/Score/Recommend are computed directly from the uploaded trace data.</footer>
@@ -629,10 +635,22 @@ function renderPoc(data) {
   const p5 = data.phase5_modeled_cost;
 
   document.getElementById('pocConclusionStats').innerHTML =
-    statCard(data.conclusion, 'conclusion') +
-    statCard(p2.stabilization_point ?? '—', 'stabilization point (n)') +
-    statCard(p3.top1_stability != null ? p3.top1_stability.toFixed(2) : '—', 'top-1 stability') +
-    statCard(p5.estimated_savings_pct != null ? `${(p5.estimated_savings_pct * 100).toFixed(1)}%` : '—', 'modeled savings');
+    statCardExplained(data.conclusion, 'conclusion',
+      data.conclusion === 'SUPPORTED'
+        ? 'a sample size was found where accuracy/recall/coverage plateau, and the top recommendation held stable there — the hypothesis that the profiler needs only a bounded amount of data is backed by this run.'
+        : 'no stable plateau (or no stable recommendation) turned up in the sample sizes tried — try larger sample sizes or more validation seeds before drawing a conclusion.') +
+    statCardExplained(p2.stabilization_point ?? '—', 'stabilization point (n)',
+      p2.stabilization_point != null
+        ? `the smallest sample size tried (${p2.stabilization_point} trace lines) beyond which accuracy/recall/coverage stopped improving — below this, treat classifications as under-sampled; above it, more data buys little.`
+        : 'no sample size in the tried range stopped improving — the curve is still climbing, so no safe minimum was identified yet.') +
+    statCardExplained(p3.top1_stability != null ? p3.top1_stability.toFixed(2) : '—', 'top-1 stability',
+      p3.top1_stability != null
+        ? `fraction of validation seeds where the same node/agent came out as the #1 recommendation — ${(p3.top1_stability * 100).toFixed(0)}% agreement means the "fix this first" call is ${p3.top1_stability === 1 ? 'fully reproducible' : 'only partially reproducible'} across independent datasets.`
+        : '—') +
+    statCardExplained(p5.estimated_savings_pct != null ? `${(p5.estimated_savings_pct * 100).toFixed(1)}%` : '—', 'modeled savings',
+      p5.estimated_savings_pct != null
+        ? `modeled reduction in LLM call cost if every node classified DETERMINISTIC were cached to one call per unique input — a conservative, synthetic estimate, not a measured production number.`
+        : '—');
 
   const rows = [
     { label: 'selected', t: p1.selected },
@@ -647,6 +665,13 @@ function renderPoc(data) {
       <td class="num">${r.t.total_false_negatives ?? '—'}</td>
       <td class="num">${r.t.mean_accuracy != null ? r.t.mean_accuracy.toFixed(3) : '—'}</td>
     </tr>`).join('');
+  const improves = p1.improves_on_current ?? (p1.selected?.total_false_negatives != null && p1.current_defaults?.total_false_negatives != null && p1.selected.total_false_negatives < p1.current_defaults.total_false_negatives);
+  document.getElementById('pocCalibrationExplain').textContent =
+    `min_repeated_inputs: how many times an input must repeat before a node is even eligible to be judged deterministic.\n` +
+    `min_repeat_coverage: what fraction of a node's observed inputs must be repeats (guards against judging a node on mostly-unique traffic).\n` +
+    `min_repeated_observations: how many repeated-input observations are required before the determinism call is trusted.\n` +
+    `false negatives: non-deterministic nodes the thresholds wrongly called deterministic — the costliest mistake, since a cached non-deterministic result silently returns stale data.\n` +
+    (p1.selected ? `selected vs. current defaults: ${improves ? 'the selected thresholds produced fewer false negatives than the currently shipped defaults across the calibration seeds.' : 'the selected thresholds did not improve on the currently shipped defaults in this run.'}` : '');
 
   document.querySelector('#pocCurveTable tbody').innerHTML = p2curve.curve.map(row => `
     <tr>
@@ -658,25 +683,41 @@ function renderPoc(data) {
       <td class="num">${row.mean_insufficient_evidence_rate != null ? row.mean_insufficient_evidence_rate.toFixed(3) : '—'}</td>
     </tr>`).join('');
   document.getElementById('pocStabilizationNote').textContent =
+    `mean accuracy: average fraction of nodes classified correctly against synthetic ground truth, across validation seeds, at that sample size.\n` +
+    `accuracy std: how much that accuracy varies between validation seeds — lower means the result is reliable regardless of which dataset you happen to draw.\n` +
+    `mean recall: of the nodes that truly are non-deterministic, the fraction correctly flagged as such.\n` +
+    `mean coverage: fraction of nodes with enough repeated inputs to be classified at all, rather than falling into INSUFFICIENT_EVIDENCE.\n` +
+    `insufficient evidence rate: fraction of nodes that could not be classified either way at that sample size — expected to fall as sample size grows.\n\n` +
     `stabilization_point: ${p2.stabilization_point ?? 'null (no plateau found in range)'}\nreason: ${p2.reason ?? ''}`;
 
   document.getElementById('pocStabilityStats').innerHTML =
-    statCard(p3.top1_stability != null ? p3.top1_stability.toFixed(3) : '—', 'top-1 stability') +
-    statCard(esc(p3.top1_mode_item ?? '—'), 'top-1 mode item') +
-    statCard(p3.top3_overlap != null ? p3.top3_overlap.toFixed(3) : '—', 'top-3 overlap');
+    statCardExplained(p3.top1_stability != null ? p3.top1_stability.toFixed(3) : '—', 'top-1 stability',
+      'how often the same single worst-offender node won the #1 spot across validation seeds — 1.0 means every seed agreed.') +
+    statCardExplained(esc(p3.top1_mode_item ?? '—'), 'top-1 mode item',
+      'the node/agent that came out on top most often — the one the recommendation would actually point at in production.') +
+    statCardExplained(p3.top3_overlap != null ? p3.top3_overlap.toFixed(3) : '—', 'top-3 overlap',
+      'average overlap between each seed\'s top-3 list and the others\' — a softer stability check than top-1, useful when the #1 spot is close between two nodes.');
 
   document.getElementById('pocBpopStats').innerHTML =
-    statCard(p4.requested_demand_y != null ? p4.requested_demand_y.toFixed(2) : '—', 'requested demand (y)') +
-    statCard(p4.recommended_capacity_x != null ? p4.recommended_capacity_x.toFixed(2) : '—', 'recommended capacity (x*)') +
-    statCard(p4.workload_coverage != null ? p4.workload_coverage.toFixed(3) : '—', 'workload coverage') +
-    statCard(p4.over_allocation_pct != null ? `${(p4.over_allocation_pct * 100).toFixed(1)}%` : '—', 'over-allocation');
+    statCardExplained(p4.requested_demand_y != null ? p4.requested_demand_y.toFixed(2) : '—', 'requested demand (y)',
+      'the workload level the B-POP leader/follower model is asked to serve, derived from the same validation data.') +
+    statCardExplained(p4.recommended_capacity_x != null ? p4.recommended_capacity_x.toFixed(2) : '—', 'recommended capacity (x*)',
+      'the capacity B-POP recommends provisioning for that demand — this is the number that would drive a real capacity decision.') +
+    statCardExplained(p4.workload_coverage != null ? p4.workload_coverage.toFixed(3) : '—', 'workload coverage',
+      'fraction of the actual workload that the recommended capacity would serve without exceeding it.') +
+    statCardExplained(p4.over_allocation_pct != null ? `${(p4.over_allocation_pct * 100).toFixed(1)}%` : '—', 'over-allocation',
+      'how much spare capacity the recommendation carries above exact demand — a deliberate safety margin, not waste by itself.');
   document.getElementById('pocBpopNote').textContent = p4.note ?? '';
 
   document.getElementById('pocCostStats').innerHTML =
-    statCard(p5.estimated_cost_before != null ? p5.estimated_cost_before.toFixed(2) : '—', 'modeled cost before') +
-    statCard(p5.estimated_cost_after != null ? p5.estimated_cost_after.toFixed(2) : '—', 'modeled cost after') +
-    statCard(p5.estimated_savings != null ? p5.estimated_savings.toFixed(2) : '—', 'modeled savings') +
-    statCard(p5.estimated_savings_pct != null ? `${(p5.estimated_savings_pct * 100).toFixed(1)}%` : '—', 'savings %');
+    statCardExplained(p5.estimated_cost_before != null ? p5.estimated_cost_before.toFixed(2) : '—', 'modeled cost before',
+      'modeled LLM call cost if every node call, deterministic or not, is paid for every time — the no-caching baseline.') +
+    statCardExplained(p5.estimated_cost_after != null ? p5.estimated_cost_after.toFixed(2) : '—', 'modeled cost after',
+      'modeled cost once DETERMINISTIC nodes are cached to one paid call per unique input, with everything else unchanged.') +
+    statCardExplained(p5.estimated_savings != null ? p5.estimated_savings.toFixed(2) : '—', 'modeled savings',
+      'the before/after difference in the same modeled cost units — the raw amount this caching strategy would avoid.') +
+    statCardExplained(p5.estimated_savings_pct != null ? `${(p5.estimated_savings_pct * 100).toFixed(1)}%` : '—', 'savings %',
+      'savings as a percentage of the before cost — the headline number for "how much would caching deterministic nodes save."');
 }
 
 // any change to the generation inputs invalidates the last generated batch,
@@ -754,6 +795,10 @@ function showErr(msg) { errEl.textContent = msg; errEl.style.display = 'block'; 
 
 function statCard(value, label) {
   return `<div class="stat"><div class="v">${value}</div><div class="k">${label}</div></div>`;
+}
+
+function statCardExplained(value, label, hint) {
+  return `<div class="stat"><div class="v">${value}</div><div class="k">${label}</div><div class="d">${hint}</div></div>`;
 }
 
 function render(data) {
