@@ -124,6 +124,7 @@
     <div class="modetab active" id="tabUpload" data-mode="upload">Upload file</div>
     <div class="modetab" id="tabGenerate" data-mode="generate">Generate sample data</div>
     <div class="modetab" id="tabSweep" data-mode="sweep">Run tests</div>
+    <div class="modetab" id="tabPOC" data-mode="poc">POC: Stabilization</div>
   </div>
 
   <form class="controls" id="form" style="border-top-left-radius:0">
@@ -197,6 +198,27 @@
       </div>
       <div class="row" style="margin-bottom:0">
         <button type="button" class="ghost" id="sweepBtn">Run sweep</button>
+      </div>
+    </div>
+
+    <div id="pocPanel" hidden>
+      <div class="genrow">
+        <div class="field">
+          <label for="pocCalSeeds">Calibration seeds <span class="hint">more = slower but more rigorous</span></label>
+          <input type="number" id="pocCalSeeds" min="1" step="1" value="5">
+        </div>
+        <div class="field">
+          <label for="pocValSeeds">Validation seeds <span class="hint">disjoint from calibration seeds</span></label>
+          <input type="number" id="pocValSeeds" min="1" step="1" value="5">
+        </div>
+        <div class="field">
+          <label for="pocCalSampleSize">Calibration sample size</label>
+          <input type="number" id="pocCalSampleSize" min="20" step="20" value="2000">
+        </div>
+      </div>
+      <p class="lede" style="margin-top:0">Runs the sample-size stabilization experiment over HTTP with a small seed count by default, for responsiveness — the rigorous 30+30-seed run this shipped with is only run directly from Python/tests.</p>
+      <div class="row" style="margin-bottom:0">
+        <button type="button" class="ghost" id="pocBtn">Run POC</button>
       </div>
     </div>
 
@@ -283,9 +305,34 @@
 
   <div id="sweepReport" style="display:none">
     <h2><span class="idx">S</span>Run tests <span style="font-size:12px;color:var(--faint)">— sweep across agent count, variance, demand_model, total_lines (1k&ndash;10k), and formula overrides</span></h2>
-    <p class="lede">Generates a fresh synthetic dataset per case, holding every other dimension at a fixed baseline, and runs it through the full pipeline — a regression/stress test of the pipeline itself, not something to tune by hand.</p>
+    <p class="lede">Generates a fresh synthetic dataset per case, holding every other dimension at a fixed baseline, and runs it through the full pipeline — a regression/stress test of the pipeline itself, not something to tune by hand. Current shipped determinism thresholds are min_repeated_inputs=3, min_repeat_coverage=0.1, min_repeated_observations=10 — the POC tab's Phase 1 calibration measured (3, 0.1, 20) outperforming these on false negatives across 30 seeds, but that change hasn't been applied here; see the POC tab for the measured comparison before tuning thresholds by hand.</p>
     <div class="stats" id="sweepStats"></div>
     <table id="sweepTable"><thead><tr><th>Group</th><th>Case</th><th>Status</th><th class="num">events</th><th class="num">elapsed (ms)</th><th class="num">x*</th><th class="num">y*</th><th class="num">accuracy</th><th>error</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div id="pocReport" style="display:none">
+    <h2><span class="idx">P</span>POC <span style="font-size:12px;color:var(--faint)">— sample-size stabilization experiment</span></h2>
+    <p class="lede">Synthetic ground truth → profiler → measured classification correctness → stable parameter configuration → increasing sample sizes → the smallest sample size beyond which more data gives little improvement (not the sample size that maximizes accuracy) → stable recommendations → modeled cost value. Calibration and validation use disjoint seed ranges; thresholds are frozen before Phase 2 runs.</p>
+    <div class="stats" id="pocConclusionStats"></div>
+
+    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 1 — calibration</h3>
+    <p class="lede">Grid-searched thresholds vs. the currently shipped defaults, across the calibration seed range.</p>
+    <table id="pocCalibrationTable"><thead><tr><th>Thresholds</th><th class="num">min_repeated_inputs</th><th class="num">min_repeat_coverage</th><th class="num">min_repeated_observations</th><th class="num">false negatives</th><th class="num">accuracy</th></tr></thead><tbody></tbody></table>
+
+    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 2 — sample-size curve</h3>
+    <p class="lede">Frozen thresholds, increasing sample sizes, validation seeds only.</p>
+    <table id="pocCurveTable"><thead><tr><th class="num">sample size</th><th class="num">mean accuracy</th><th class="num">accuracy std</th><th class="num">mean recall</th><th class="num">mean coverage</th><th class="num">insufficient evidence rate</th></tr></thead><tbody></tbody></table>
+    <pre class="code" id="pocStabilizationNote"></pre>
+
+    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 3 — recommendation stability</h3>
+    <div class="stats" id="pocStabilityStats"></div>
+
+    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 4 — B-POP evaluation</h3>
+    <div class="stats" id="pocBpopStats"></div>
+    <pre class="code" id="pocBpopNote"></pre>
+
+    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 5 — modeled cost savings <span style="font-size:12px;color:var(--faint)">— synthetic/modeled, not measured production savings</span></h3>
+    <div class="stats" id="pocCostStats"></div>
   </div>
 
   <footer>B-POP Test Environment · formula overrides apply only to the Profile step; Mine/Score/Recommend are computed directly from the uploaded trace data.</footer>
@@ -331,13 +378,17 @@ const generatePanel = document.getElementById('generatePanel');
 const tabUpload = document.getElementById('tabUpload');
 const tabGenerate = document.getElementById('tabGenerate');
 const tabSweep = document.getElementById('tabSweep');
+const tabPOC = document.getElementById('tabPOC');
 const genSummaryEl = document.getElementById('genSummary');
 const agentCountEl = document.getElementById('agentCount');
 const sweepPanel = document.getElementById('sweepPanel');
+const pocPanel = document.getElementById('pocPanel');
 const formulaRow = document.getElementById('formulaRow');
 const submitRow = document.getElementById('submitRow');
 const sweepReportEl = document.getElementById('sweepReport');
+const pocReportEl = document.getElementById('pocReport');
 let lastSweepResult = null;
+let lastPocResult = null;
 
 function updateRunBtnState() {
   const blocked = mode === 'generate' && !generatedBlob;
@@ -350,19 +401,23 @@ function setMode(m) {
   tabUpload.classList.toggle('active', m === 'upload');
   tabGenerate.classList.toggle('active', m === 'generate');
   tabSweep.classList.toggle('active', m === 'sweep');
+  tabPOC.classList.toggle('active', m === 'poc');
   uploadPanel.hidden = m !== 'upload';
   generatePanel.hidden = m !== 'generate';
   sweepPanel.hidden = m !== 'sweep';
-  formulaRow.hidden = m === 'sweep';
-  submitRow.hidden = m === 'sweep';
-  pipelineEl.style.display = m === 'sweep' ? 'none' : '';
-  reportEl.style.display = m === 'sweep' ? 'none' : (reportEl.dataset.hasRun ? 'block' : 'none');
+  pocPanel.hidden = m !== 'poc';
+  formulaRow.hidden = m === 'sweep' || m === 'poc';
+  submitRow.hidden = m === 'sweep' || m === 'poc';
+  pipelineEl.style.display = (m === 'sweep' || m === 'poc') ? 'none' : '';
+  reportEl.style.display = (m === 'sweep' || m === 'poc') ? 'none' : (reportEl.dataset.hasRun ? 'block' : 'none');
   sweepReportEl.style.display = m === 'sweep' && lastSweepResult ? 'block' : 'none';
+  pocReportEl.style.display = m === 'poc' && lastPocResult ? 'block' : 'none';
   updateRunBtnState();
 }
 tabUpload.addEventListener('click', () => setMode('upload'));
 tabGenerate.addEventListener('click', () => setMode('generate'));
 tabSweep.addEventListener('click', () => setMode('sweep'));
+tabPOC.addEventListener('click', () => setMode('poc'));
 
 function updateAgentFields() {
   const n = parseInt(agentCountEl.value, 10);
@@ -535,6 +590,93 @@ function renderSweep(data) {
       <td class="num">${r.accuracy != null ? r.accuracy.toFixed(3) : '—'}</td>
       <td class="${r.error ? 'bad' : ''}">${r.error ? esc(r.error) : ''}</td>
     </tr>`).join('');
+}
+
+const pocBtn = document.getElementById('pocBtn');
+pocBtn.addEventListener('click', async () => {
+  errEl.style.display = 'none';
+  pocBtn.disabled = true;
+  pocBtn.textContent = 'Running POC…';
+  try {
+    const calSeeds = parseInt(document.getElementById('pocCalSeeds').value, 10) || 5;
+    const valSeeds = parseInt(document.getElementById('pocValSeeds').value, 10) || 5;
+    const calSampleSize = parseInt(document.getElementById('pocCalSampleSize').value, 10) || 2000;
+    const params = new URLSearchParams({
+      calibration_seed_count: calSeeds,
+      validation_seed_count: valSeeds,
+      calibration_sample_size: calSampleSize,
+    });
+    const res = await fetch(`/poc/run?${params}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'POC run failed.');
+    lastPocResult = data;
+    renderPoc(data);
+    pocReportEl.style.display = 'block';
+  } catch (e) {
+    showErr(e.message || String(e));
+  } finally {
+    pocBtn.disabled = false;
+    pocBtn.textContent = 'Run POC';
+  }
+});
+
+function renderPoc(data) {
+  const p1 = data.phase1_calibration;
+  const p2curve = data.phase2_sample_size;
+  const p2 = data.phase2_stabilization;
+  const p3 = data.phase3_recommendation_stability;
+  const p4 = data.phase4_bpop_evaluation;
+  const p5 = data.phase5_modeled_cost;
+
+  document.getElementById('pocConclusionStats').innerHTML =
+    statCard(data.conclusion, 'conclusion') +
+    statCard(p2.stabilization_point ?? '—', 'stabilization point (n)') +
+    statCard(p3.top1_stability != null ? p3.top1_stability.toFixed(2) : '—', 'top-1 stability') +
+    statCard(p5.estimated_savings_pct != null ? `${(p5.estimated_savings_pct * 100).toFixed(1)}%` : '—', 'modeled savings');
+
+  const rows = [
+    { label: 'selected', t: p1.selected },
+    { label: 'current defaults', t: p1.current_defaults },
+  ];
+  document.querySelector('#pocCalibrationTable tbody').innerHTML = rows.map(r => `
+    <tr>
+      <td>${esc(r.label)}</td>
+      <td class="num">${r.t.min_repeated_inputs}</td>
+      <td class="num">${r.t.min_repeat_coverage}</td>
+      <td class="num">${r.t.min_repeated_observations}</td>
+      <td class="num">${r.t.total_false_negatives ?? '—'}</td>
+      <td class="num">${r.t.mean_accuracy != null ? r.t.mean_accuracy.toFixed(3) : '—'}</td>
+    </tr>`).join('');
+
+  document.querySelector('#pocCurveTable tbody').innerHTML = p2curve.curve.map(row => `
+    <tr>
+      <td class="num">${row.sample_size}</td>
+      <td class="num">${row.mean_accuracy != null ? row.mean_accuracy.toFixed(3) : '—'}</td>
+      <td class="num">${row.accuracy_std != null ? row.accuracy_std.toFixed(3) : '—'}</td>
+      <td class="num">${row.mean_recall != null ? row.mean_recall.toFixed(3) : '—'}</td>
+      <td class="num">${row.mean_coverage != null ? row.mean_coverage.toFixed(3) : '—'}</td>
+      <td class="num">${row.mean_insufficient_evidence_rate != null ? row.mean_insufficient_evidence_rate.toFixed(3) : '—'}</td>
+    </tr>`).join('');
+  document.getElementById('pocStabilizationNote').textContent =
+    `stabilization_point: ${p2.stabilization_point ?? 'null (no plateau found in range)'}\nreason: ${p2.reason ?? ''}`;
+
+  document.getElementById('pocStabilityStats').innerHTML =
+    statCard(p3.top1_stability != null ? p3.top1_stability.toFixed(3) : '—', 'top-1 stability') +
+    statCard(esc(p3.top1_mode_item ?? '—'), 'top-1 mode item') +
+    statCard(p3.top3_overlap != null ? p3.top3_overlap.toFixed(3) : '—', 'top-3 overlap');
+
+  document.getElementById('pocBpopStats').innerHTML =
+    statCard(p4.requested_demand_y != null ? p4.requested_demand_y.toFixed(2) : '—', 'requested demand (y)') +
+    statCard(p4.recommended_capacity_x != null ? p4.recommended_capacity_x.toFixed(2) : '—', 'recommended capacity (x*)') +
+    statCard(p4.workload_coverage != null ? p4.workload_coverage.toFixed(3) : '—', 'workload coverage') +
+    statCard(p4.over_allocation_pct != null ? `${(p4.over_allocation_pct * 100).toFixed(1)}%` : '—', 'over-allocation');
+  document.getElementById('pocBpopNote').textContent = p4.note ?? '';
+
+  document.getElementById('pocCostStats').innerHTML =
+    statCard(p5.estimated_cost_before != null ? p5.estimated_cost_before.toFixed(2) : '—', 'modeled cost before') +
+    statCard(p5.estimated_cost_after != null ? p5.estimated_cost_after.toFixed(2) : '—', 'modeled cost after') +
+    statCard(p5.estimated_savings != null ? p5.estimated_savings.toFixed(2) : '—', 'modeled savings') +
+    statCard(p5.estimated_savings_pct != null ? `${(p5.estimated_savings_pct * 100).toFixed(1)}%` : '—', 'savings %');
 }
 
 // any change to the generation inputs invalidates the last generated batch,
