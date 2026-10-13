@@ -242,6 +242,10 @@ def run_sweep_endpoint(seed: int = 1) -> dict:
     return run_sweep(seed=seed)
 
 
+POC_MAX_SEED_COUNT = 10
+POC_MAX_CALIBRATION_SAMPLE_SIZE = 20000
+
+
 @app.post("/poc/run")
 def run_poc_endpoint(
     calibration_seed_count: int = 5,
@@ -252,7 +256,31 @@ def run_poc_endpoint(
     over HTTP. Defaults to a small number of seeds (5 + 5, vs. the
     Python-callable ``run_poc()``'s rigorous 30 + 30 default) purely so
     an HTTP call stays responsive -- the full 30-seed run is meant to be
-    invoked directly from Python/tests, not through this endpoint."""
+    invoked directly from Python/tests, not through this endpoint.
+
+    Inputs are capped server-side -- measured 10 calibration + 10
+    validation seeds at calibration_sample_size=20000 at ~70s end to end,
+    while a 10x larger sample size (500000) blows well past Railway's
+    proxy request timeout and returns a non-JSON "upstream error" with
+    the container left computing a response nobody will receive."""
+    if not (1 <= calibration_seed_count <= POC_MAX_SEED_COUNT):
+        raise HTTPException(
+            status_code=400,
+            detail=f"calibration_seed_count must be between 1 and {POC_MAX_SEED_COUNT} over HTTP "
+            "-- run the rigorous 30-seed version directly from Python/tests instead.",
+        )
+    if not (1 <= validation_seed_count <= POC_MAX_SEED_COUNT):
+        raise HTTPException(
+            status_code=400,
+            detail=f"validation_seed_count must be between 1 and {POC_MAX_SEED_COUNT} over HTTP "
+            "-- run the rigorous 30-seed version directly from Python/tests instead.",
+        )
+    if not (1 <= calibration_sample_size <= POC_MAX_CALIBRATION_SAMPLE_SIZE):
+        raise HTTPException(
+            status_code=400,
+            detail=f"calibration_sample_size must be between 1 and {POC_MAX_CALIBRATION_SAMPLE_SIZE} over HTTP "
+            "-- larger sample sizes risk the request timing out at Railway's proxy; run directly from Python/tests instead.",
+        )
     calibration_seeds = tuple(range(1, 1 + calibration_seed_count))
     validation_seeds = tuple(range(101, 101 + validation_seed_count))
     try:
