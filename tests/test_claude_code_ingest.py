@@ -86,3 +86,40 @@ def test_analyze_endpoint_accepts_claude_code_jsonl_upload():
     response = TestClient(app).post("/analyze", files={"file": ("session.jsonl", body.encode())})
     assert response.status_code == 200, response.text
     assert response.json()["observe"]["workflows"][0]["name"] == "claude-code/proj"
+
+
+def _second_session():
+    rows = json.loads(json.dumps(_transcript()))
+    for r in rows:
+        r["sessionId"] = "s2"
+        if "promptId" in r:
+            r["promptId"] = "p2"
+    return rows
+
+
+def test_analyze_endpoint_merges_multiple_uploaded_files():
+    files = [
+        ("file", ("a.jsonl", "\n".join(json.dumps(r) for r in _transcript()).encode())),
+        ("file", ("b.jsonl", "\n".join(json.dumps(r) for r in _second_session()).encode())),
+    ]
+    response = TestClient(app).post("/analyze", files=files)
+    assert response.status_code == 200, response.text
+    observe = response.json()["observe"]
+    assert observe["files"] == [{"name": "a.jsonl", "num_events": 3}, {"name": "b.jsonl", "num_events": 3}]
+    assert observe["workflows"] == [{"name": "claude-code/proj", "num_events": 6, "num_runs": 2}]
+
+
+def test_analyze_endpoint_rejects_duplicate_file_content():
+    body = "\n".join(json.dumps(r) for r in _transcript()).encode()
+    response = TestClient(app).post("/analyze", files=[("file", ("a.jsonl", body)), ("file", ("copy.jsonl", body))])
+    assert response.status_code == 400
+    assert "copy.jsonl" in response.json()["detail"]
+
+
+def test_analyze_endpoint_names_the_bad_file_in_parse_errors():
+    good = "\n".join(json.dumps(r) for r in _transcript()).encode()
+    response = TestClient(app).post(
+        "/analyze", files=[("file", ("good.jsonl", good)), ("file", ("bad.json", b'[{"trace_id": "t"}]'))]
+    )
+    assert response.status_code == 422
+    assert "bad.json" in response.json()["detail"]

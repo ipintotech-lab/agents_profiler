@@ -140,8 +140,8 @@
   <form class="controls" id="form" style="border-top-left-radius:0">
     <div class="row" id="uploadPanel">
       <div class="field grow">
-        <label for="file">Trace file (.json / .jsonl)</label>
-        <input type="file" id="file" name="file" accept=".json,.jsonl,application/json">
+        <label for="file">Trace file(s) (.json / .jsonl) <span class="hint">select several to analyze together</span></label>
+        <input type="file" id="file" name="file" accept=".json,.jsonl,application/json" multiple>
       </div>
       <div class="field">
         <label for="workflow">Workflow</label>
@@ -842,7 +842,7 @@ form.addEventListener('submit', async (ev) => {
   } else {
     const fileInput = document.getElementById('file');
     if (!fileInput.files.length) { showErr('Choose a trace file first.'); runBtn.disabled = false; runBtn.textContent = 'Run pipeline'; return; }
-    fd.append('file', fileInput.files[0]);
+    for (const f of fileInput.files) fd.append('file', f);
   }
   const workflow = document.getElementById('workflow').value;
   if (workflow) fd.append('workflow', workflow);
@@ -891,7 +891,8 @@ function render(data) {
     statCard(ob.num_events, 'events') +
     statCard(ob.num_agents, 'agents') +
     statCard(ob.num_workflows, 'workflows') +
-    statCard(ob.selected_workflow, 'analyzed workflow');
+    statCard(ob.selected_workflow, 'analyzed workflow') +
+    (ob.files && ob.files.length > 1 ? statCard(ob.files.length, 'files') : '');
   const wfBody = document.querySelector('#workflowTable tbody');
   wfBody.innerHTML = ob.workflows.map(w => `<tr><td>${esc(w.name)}</td><td class="num">${w.num_events}</td><td class="num">${w.num_runs}</td></tr>`).join('');
 

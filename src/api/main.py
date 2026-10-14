@@ -9,6 +9,7 @@ trace-file-in / report-out path backing the UI at ``/``.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 from pathlib import Path
@@ -117,11 +118,11 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-def _parse_trace_events(raw: bytes) -> list[TraceEvent]:
+def _parse_trace_events(raw: bytes, filename: str = "uploaded file") -> list[TraceEvent]:
     text = raw.decode("utf-8")
     stripped = text.strip()
     if not stripped:
-        raise HTTPException(status_code=400, detail="uploaded file is empty")
+        raise HTTPException(status_code=400, detail=f"{filename} is empty")
     try:
         # A single JSON document (array or object, pretty-printed or not)
         # takes priority -- only fall back to JSONL (one JSON value per
@@ -135,12 +136,12 @@ def _parse_trace_events(raw: bytes) -> list[TraceEvent]:
         rows = normalize_raw_json(parsed)
         return [TraceEvent.model_validate(row) for row in rows]
     except (json.JSONDecodeError, ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=f"could not parse trace file: {exc}") from exc
+        raise HTTPException(status_code=422, detail=f"could not parse {filename}: {exc}") from exc
 
 
 @app.post("/analyze")
 async def analyze(
-    file: UploadFile = File(...),  # noqa: B008
+    file: list[UploadFile] = File(...),  # noqa: B008
     workflow: str | None = Form(None),
     unit_cost: float | None = Form(None),
     unit_value: float | None = Form(None),
@@ -148,16 +149,33 @@ async def analyze(
     ground_truth: str | None = Form(None),
     demand_model: str = Form(DEFAULT_DEMAND_MODEL),
 ) -> dict:
-    """Run the uploaded trace file through Observe -> Profile -> Mine ->
+    """Run the uploaded trace file(s) through Observe -> Profile -> Mine ->
     Score -> Recommend for one workflow (auto-picked if not given).
+
+    ``file`` may be repeated to upload several files (e.g. several Claude
+    Code sessions); each is parsed on its own -- so they can be in different
+    formats -- and their events are analyzed together. Uploading the same
+    content twice is rejected, since duplicated events would read as
+    repeated identical inputs and inflate determinism evidence.
 
     ``ground_truth`` is an optional JSON-encoded ``{"agent/node": {"determinism_rate": float}}``
     manifest (as returned by ``/generate``) -- when present, the report
     includes a "validation" section scoring the profiler's classification
     against it.
     """
-    raw = await file.read()
-    events = _parse_trace_events(raw)
+    events: list[TraceEvent] = []
+    file_summaries: list[dict] = []
+    seen_digests: dict[str, str] = {}
+    for upload in file:
+        raw = await upload.read()
+        name = upload.filename or f"file {len(file_summaries) + 1}"
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest in seen_digests:
+            raise HTTPException(status_code=400, detail=f"{name} has the same content as {seen_digests[digest]}")
+        seen_digests[digest] = name
+        file_events = _parse_trace_events(raw, name)
+        events.extend(file_events)
+        file_summaries.append({"name": name, "num_events": len(file_events)})
     parsed_ground_truth = None
     if ground_truth:
         try:
@@ -165,7 +183,7 @@ async def analyze(
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=422, detail=f"could not parse ground_truth: {exc}") from exc
     try:
-        return run_pipeline(
+        report = run_pipeline(
             events,
             workflow=workflow or None,
             unit_cost=unit_cost,
@@ -176,6 +194,8 @@ async def analyze(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    report["observe"]["files"] = file_summaries
+    return report
 
 
 @app.post("/generate")
