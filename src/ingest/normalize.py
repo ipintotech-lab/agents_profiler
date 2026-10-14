@@ -165,19 +165,21 @@ def parse_raw_text(text: str) -> Any:
 
 def hash_input_values(rows: list[dict]) -> list[dict]:
     """Replace every ``input_state`` value with ``"sha256:<digest>"``,
-    keeping the keys. Equal values still hash equal, so determinism
+    keeping the keys, and the ``trigger`` (the user prompt). Equal values still hash equal, so determinism
     classification is unchanged, but commands, file paths, edit text, etc.
     no longer appear in the data."""
+    def digest(value: object) -> str:
+        return "sha256:" + hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
     hashed = []
     for row in rows:
+        if isinstance(row.get("trigger"), str):
+            row = {**row, "trigger": digest(row["trigger"])}
         state = row.get("input_state")
         if isinstance(state, dict):
             row = {
                 **row,
-                "input_state": {
-                    key: "sha256:" + hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:16]
-                    for key, value in state.items()
-                },
+                "input_state": {key: digest(value) for key, value in state.items()},
             }
         hashed.append(row)
     return hashed

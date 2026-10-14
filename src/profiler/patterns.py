@@ -72,6 +72,7 @@ def _step_summary(step: _Step) -> dict:
     return {
         "node": step.event.node,
         "input": {k: _display_value(v) for k, v in step.event.input_state.items()},
+        "trigger": _display_value(step.event.trigger) if step.event.trigger is not None else None,
     }
 
 
@@ -178,6 +179,10 @@ def repeated_calls(events: list[TraceEvent]) -> list[dict]:
                 "same_output": same_output,
                 "redundant_calls": len(group) - 1 if same_output else 0,
                 "cost": sum(e.cost for e in group),
+                "triggers": [
+                    _display_value(t)
+                    for t in dict.fromkeys(e.trigger for e in group if e.trigger is not None)
+                ][:3],
             }
         )
     calls.sort(key=lambda c: (-c["redundant_calls"], -c["count"]))

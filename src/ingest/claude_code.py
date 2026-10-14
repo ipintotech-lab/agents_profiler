@@ -151,6 +151,19 @@ def _weighted_tokens(usage: dict) -> float:
     )
 
 
+def _prompt_text(record: dict) -> str | None:
+    """The text the user typed, for a user record that is a prompt (not a
+    tool result)."""
+    content = record["message"].get("content")
+    if isinstance(content, str):
+        return content
+    blocks = [c for c in content or [] if isinstance(c, dict)]
+    if any(c.get("type") == "tool_result" for c in blocks):
+        return None
+    text = "\n".join(c.get("text", "") for c in blocks if c.get("type") == "text").strip()
+    return text or None
+
+
 def _user_trigger(record: dict, tool_names_by_id: dict[str, str]) -> str | None:
     """What an LLM call following this user record is reacting to."""
     content = record["message"].get("content")
@@ -186,6 +199,9 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
     current_prompt: dict[str, str] = {}
     session_root: dict[str, str] = {}
     last_trigger: dict[str, str] = {}
+    # The user prompt that started the current run, per lane (a subagent's
+    # lane starts from the prompt it was given).
+    prompt_text: dict[str, str] = {}
     # Timestamp of the latest record of *any* type per lane. An LLM call is
     # timed from the record just before its reply starts, not from its
     # trigger: a turn can be started by a queued message, a task
@@ -213,6 +229,11 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
             if r.get("isMeta"):
                 continue
             last_trigger[lane] = _user_trigger(r, tool_names_by_id)
+            # A compaction summary continues the same work; keep the prompt
+            # that actually started it.
+            text = None if r.get("isCompactSummary") else _prompt_text(r)
+            if text is not None:
+                prompt_text[lane] = text
             for c in r["message"].get("content") or []:
                 if isinstance(c, dict) and c.get("type") == "tool_result" and c.get("tool_use_id") in tool_calls:
                     call = tool_calls[c["tool_use_id"]]
@@ -238,6 +259,7 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
             "workflow": f"claude-code/{PurePosixPath(cwd).name or 'unknown'}",
             "agent": "claude-code-subagent" if sidechain else "claude-code",
             "workflow_version": r.get("version"),
+            "trigger": prompt_text.get(lane) or prompt_text.get(f"{session}:False"),
         }
         ts = _ts_ms(r)
 

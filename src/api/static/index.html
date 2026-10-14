@@ -95,6 +95,7 @@
   tr.node-detail table { margin: 0; font-size: 12px; }
   .inp { white-space: pre-wrap; word-break: break-all; color: var(--ink); }
   .inp .k { color: var(--dim); }
+  .inp hr.tsep { border: 0; border-top: 1px dashed var(--line, #ccc); margin: 4px 0; }
   .oc { display: inline-block; margin: 1px 6px 1px 0; padding: 1px 6px; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; color: var(--dim); }
   .oc b { color: var(--ink); font-weight: normal; }
   .conflict { color: var(--amber); }
@@ -306,7 +307,7 @@
     <p class="lede">Repeated sequences: the same steps in the same order, recurring across runs. "Between steps" is the LLM calls (and their real tokens and cost) spent only on choosing the next step inside the sequence. Combining the sequence into one scripted flow would remove those. Click a row to see an example.</p>
     <table id="seqTable"><thead><tr><th>Sequence</th><th class="num">Seen</th><th class="num">Runs</th><th class="num">LLM calls between steps</th><th class="num">Tokens between steps</th><th class="num">Cost between steps</th><th class="num">Total cost</th></tr></thead><tbody></tbody></table>
     <p class="lede">Repeated calls: the same operation with the identical input. If every repeat gave the same output, each repeat after the first was redundant (a cache candidate).</p>
-    <table id="callTable"><thead><tr><th>Operation</th><th>Input</th><th class="num">Seen</th><th>Output</th><th class="num">Redundant</th></tr></thead><tbody></tbody></table>
+    <table id="callTable"><thead><tr><th>Operation</th><th>Input</th><th>Triggered by (user input)</th><th class="num">Seen</th><th>Output</th><th class="num">Redundant</th></tr></thead><tbody></tbody></table>
 
     <h2><span class="idx">04</span>Score</h2>
     <p class="lede" id="scoreFormula"></p>
@@ -1034,17 +1035,18 @@ function render(data) {
       <td class="num">$${p.cost_between_steps.toFixed(2)}</td>
       <td class="num">$${p.sequence_cost.toFixed(2)}</td>
     </tr>
-    <tr class="node-detail" hidden><td colspan="7"><table><thead><tr><th>Example step</th><th>Input</th></tr></thead><tbody>
+    <tr class="node-detail" hidden><td colspan="7">${p.example[0].trigger ? `<p class="lede"><b>Triggered by:</b> ${esc(p.example[0].trigger)}</p>` : ''}<table><thead><tr><th>Example step</th><th>Input</th></tr></thead><tbody>
       ${p.example.map(st => `<tr><td>${esc(st.node)}</td><td class="inp">${inputText(st.input) || '<span class="k">(empty input)</span>'}</td></tr>`).join('')}
     </tbody></table></td></tr>`).join('') : '<tr><td colspan="7">No sequence repeated 3+ times.</td></tr>';
   document.querySelector('#callTable tbody').innerHTML = rep.calls.length ? rep.calls.map(c => `
     <tr>
       <td>${esc(c.node)}</td>
       <td class="inp">${inputText(c.input) || '<span class="k">(empty input)</span>'}</td>
+      <td class="inp">${(c.triggers || []).map(esc).join('\n<hr class="tsep">') || '<span class="k">—</span>'}</td>
       <td class="num">${c.count}</td>
       <td>${c.same_output ? '<span class="pill det">same every time</span>' : `<span class="pill nondet">${c.distinct_outputs} different</span>`}</td>
       <td class="num">${c.redundant_calls}</td>
-    </tr>`).join('') : '<tr><td colspan="5">No call repeated with an identical input.</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="6">No call repeated with an identical input.</td></tr>';
   document.querySelectorAll('#seqTable tr.node-row').forEach(row => row.addEventListener('click', () => {
     row.classList.toggle('open');
     row.nextElementSibling.hidden = !row.classList.contains('open');
@@ -1132,12 +1134,18 @@ function verdictLabel(v) {
   return '<span class="pill">seen once</span> ';
 }
 
+function triggersText(triggers, distinct) {
+  if (!triggers.length) return '<span class="k">—</span>';
+  const more = distinct > triggers.length ? `\n<span class="k">+${distinct - triggers.length} more</span>` : '';
+  return triggers.map(t => `${esc(t.trigger)}${t.count > 1 ? ` <span class="k">×${t.count}</span>` : ''}`).join('\n<hr class="tsep">') + more;
+}
+
 function nodeInputsTable(ev) {
   const inputs = ev.inputs || [];
   if (!inputs.length) return '<p class="lede">No inputs recorded for this node.</p>';
   const shown = inputs.length < ev.unique_inputs ? `top ${inputs.length} of ${ev.unique_inputs}` : `all ${ev.unique_inputs}`;
   return `<table>
-    <thead><tr><th>Input (${shown} distinct, conflicting first)</th><th class="num">Seen</th><th>Verdict · outcomes</th></tr></thead>
+    <thead><tr><th>Input (${shown} distinct, conflicting first)</th><th>Triggered by (user input)</th><th class="num">Seen</th><th>Verdict · outcomes</th></tr></thead>
     <tbody>${inputs.map(i => {
       const entries = Object.entries(i.input);
       const inp = entries.length
@@ -1145,6 +1153,7 @@ function nodeInputsTable(ev) {
         : '<span class="k">(empty input)</span>';
       return `<tr>
         <td class="inp">${inp}</td>
+        <td class="inp">${triggersText(i.triggers || [], i.distinct_triggers || 0)}</td>
         <td class="num">${i.count}</td>
         <td>${verdictLabel(i.verdict)}${i.outcomes.map(o => `<span class="oc"><b>${esc(outcomeLabel(o))}</b> ×${o.count}</span>`).join('')}</td>
       </tr>`;

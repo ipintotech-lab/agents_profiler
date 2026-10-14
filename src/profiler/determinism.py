@@ -55,6 +55,7 @@ MAX_REPORTED_INPUTS = 25
 first, then most frequent). Display only -- classification uses all."""
 
 MAX_REPORTED_VALUE_CHARS = 300
+MAX_REPORTED_TRIGGERS = 3
 """Long input values (file contents, edit text) are cut to this length in
 the report."""
 
@@ -133,7 +134,10 @@ def classify(
     counts_by_input: dict[str, int] = defaultdict(int)
     outcome_counts_by_input: dict[str, Counter] = defaultdict(Counter)
     example_by_input: dict[str, dict] = {}
+    triggers_by_input: dict[str, Counter] = defaultdict(Counter)
     for e in events:
+        if e.trigger is not None:
+            triggers_by_input[_input_key(e)][e.trigger] += 1
         key = _input_key(e)
         outcomes_by_input[key].add(_outcome_key(e))
         counts_by_input[key] += 1
@@ -208,6 +212,11 @@ def classify(
                 {"selected": sel, "result": res, "count": n}
                 for (sel, res), n in outcome_counts_by_input[k].most_common()
             ],
+            "triggers": [
+                {"trigger": _display_value(t), "count": n}
+                for t, n in triggers_by_input[k].most_common(MAX_REPORTED_TRIGGERS)
+            ],
+            "distinct_triggers": len(triggers_by_input[k]),
         }
         for k in reported_keys
     ]

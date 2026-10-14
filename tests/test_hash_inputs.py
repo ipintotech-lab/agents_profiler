@@ -60,3 +60,10 @@ def test_convert_cli_reports_unparseable_file(tmp_path, capsys):
     bad.write_text('[{"trace_id": "t"}]')
     assert convert_main([str(bad)]) == 1
     assert "bad.json" in capsys.readouterr().err
+
+
+def test_hash_inputs_also_hashes_the_trigger():
+    from ingest import hash_input_values
+
+    (row,) = hash_input_values([{"trigger": "my secret prompt", "input_state": {"a": 1}}])
+    assert row["trigger"].startswith("sha256:")

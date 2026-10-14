@@ -37,3 +37,7 @@ class TraceEvent(BaseModel):
     cost: float = 0.0
     result: str | None = None
     workflow_version: str | None = None
+    # What started this event's run -- e.g. the user's prompt. Context for
+    # reading the report, deliberately kept out of ``input_state`` so it
+    # doesn't split otherwise-identical inputs.
+    trigger: str | None = None
