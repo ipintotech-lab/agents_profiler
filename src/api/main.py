@@ -27,7 +27,7 @@ from bpop import (
     Variable,
 )
 from bpop.result import BPOPResult
-from ingest import DEFAULT_DEMAND_MODEL, normalize_raw_json
+from ingest import DEFAULT_DEMAND_MODEL, normalize_raw_json, parse_raw_text
 from ingest.trace_schema import TraceEvent
 from profiler import run_pipeline, run_poc, run_sweep
 from rawdata_gen import (
@@ -124,16 +124,7 @@ def _parse_trace_events(raw: bytes, filename: str = "uploaded file") -> list[Tra
     if not stripped:
         raise HTTPException(status_code=400, detail=f"{filename} is empty")
     try:
-        # A single JSON document (array or object, pretty-printed or not)
-        # takes priority -- only fall back to JSONL (one JSON value per
-        # line) when the whole blob doesn't parse as one document, since a
-        # pretty-printed array has multiple non-empty lines too.
-        try:
-            parsed = json.loads(stripped)
-        except json.JSONDecodeError:
-            lines = [line for line in stripped.splitlines() if line.strip()]
-            parsed = [json.loads(line) for line in lines]
-        rows = normalize_raw_json(parsed)
+        rows = normalize_raw_json(parse_raw_text(stripped))
         return [TraceEvent.model_validate(row) for row in rows]
     except (json.JSONDecodeError, ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"could not parse {filename}: {exc}") from exc

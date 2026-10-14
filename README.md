@@ -127,6 +127,18 @@ curl -X POST localhost:8000/generate \
   -d '{"agent_count": 2, "actions_per_agent": [4, 6], "total_lines": 25}'
 ```
 
+`/analyze` also accepts OpenTelemetry OTLP JSON and Claude Code session
+transcripts (`~/.claude/projects/<project>/*.jsonl`), and `-F file=@...`
+can be repeated to analyze several files together. To avoid uploading raw
+session data (prompts, tool outputs, commands), convert locally first --
+`--hash-inputs` replaces every `input_state` value with a hash, which
+leaves determinism results unchanged:
+
+```bash
+python -m ingest.convert ~/.claude/projects/<project>/*.jsonl --hash-inputs -o traces.jsonl
+curl -F file=@traces.jsonl localhost:8000/analyze
+```
+
 ## Setup
 
 ```bash

@@ -15,6 +15,8 @@ callers should reject the whole file rather than guess at bad data.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from .claude_code import convert_claude_code_transcript, is_claude_code_transcript
@@ -147,3 +149,35 @@ def normalize_raw_json(parsed: Any) -> list[dict]:
     """
     rows = _unwrap_container(parsed)
     return [normalize_event(row) for row in rows]
+
+
+def parse_raw_text(text: str) -> Any:
+    """Parse a trace file's text as one JSON document, falling back to
+    JSON Lines (one JSON value per line) when it isn't one document --
+    a pretty-printed array has multiple non-empty lines too, so the
+    single-document parse has to win when it succeeds."""
+    stripped = text.strip()
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        return [json.loads(line) for line in stripped.splitlines() if line.strip()]
+
+
+def hash_input_values(rows: list[dict]) -> list[dict]:
+    """Replace every ``input_state`` value with ``"sha256:<digest>"``,
+    keeping the keys. Equal values still hash equal, so determinism
+    classification is unchanged, but commands, file paths, edit text, etc.
+    no longer appear in the data."""
+    hashed = []
+    for row in rows:
+        state = row.get("input_state")
+        if isinstance(state, dict):
+            row = {
+                **row,
+                "input_state": {
+                    key: "sha256:" + hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:16]
+                    for key, value in state.items()
+                },
+            }
+        hashed.append(row)
+    return hashed
