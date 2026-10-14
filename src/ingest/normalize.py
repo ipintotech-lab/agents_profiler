@@ -2,10 +2,11 @@
 ``TraceEvent`` expects, so an uploaded file doesn't have to already match
 this app's exact schema to be analyzed.
 
-Handles three cases beyond a bare list of already-correct TraceEvent
+Handles four cases beyond a bare list of already-correct TraceEvent
 dicts: events wrapped under a different top-level key (``{"events": [...]}``,
 ``{"data": {"traces": [...]}}``), an OpenTelemetry OTLP JSON span export
-(``resourceSpans`` / ``scopeSpans`` / ``spans``), and per-record field-name
+(``resourceSpans`` / ``scopeSpans`` / ``spans``), a Claude Code session
+transcript (see ``claude_code.py``), and per-record field-name
 aliases (``spanId`` -> ``run_id``, ``duration_ms`` -> ``latency_ms``, etc).
 
 A record that still can't be mapped to the required TraceEvent fields
@@ -15,6 +16,8 @@ callers should reject the whole file rather than guess at bad data.
 from __future__ import annotations
 
 from typing import Any
+
+from .claude_code import convert_claude_code_transcript, is_claude_code_transcript
 
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "trace_id": ("trace_id", "traceId", "traceID", "trace"),
@@ -79,6 +82,8 @@ def _unwrap_otel(parsed: dict) -> list[dict] | None:
 
 def _unwrap_container(parsed: Any) -> list:
     if isinstance(parsed, list):
+        if is_claude_code_transcript(parsed):
+            return convert_claude_code_transcript(parsed)
         return parsed
     if isinstance(parsed, dict):
         otel_events = _unwrap_otel(parsed)
