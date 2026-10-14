@@ -185,11 +185,23 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
 
     current_prompt: dict[str, str] = {}
     session_root: dict[str, str] = {}
-    last_trigger: dict[str, tuple[str, float | None]] = {}
+    last_trigger: dict[str, str] = {}
+    # Timestamp of the latest record of *any* type per lane. An LLM call is
+    # timed from the record just before its reply starts, not from its
+    # trigger: a turn can be started by a queued message, a task
+    # notification or a resumed session hours after the last tool result,
+    # and that idle time isn't model latency.
+    last_seen_ms: dict[str, float] = {}
 
     for r in rows:
         kind = r.get("type")
         session = r.get("sessionId")
+        record_ms = _ts_ms(r)
+        previous_ms = None
+        if session and record_ms is not None:
+            seen_lane = f"{session}:{bool(r.get('isSidechain'))}"
+            previous_ms = last_seen_ms.get(seen_lane)
+            last_seen_ms[seen_lane] = record_ms
         if kind not in ("user", "assistant") or not session or not isinstance(r.get("message"), dict):
             continue
         sidechain = bool(r.get("isSidechain"))
@@ -200,7 +212,7 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
                 current_prompt[session] = r["promptId"]
             if r.get("isMeta"):
                 continue
-            last_trigger[lane] = (_user_trigger(r, tool_names_by_id), _ts_ms(r))
+            last_trigger[lane] = _user_trigger(r, tool_names_by_id)
             for c in r["message"].get("content") or []:
                 if isinstance(c, dict) and c.get("type") == "tool_result" and c.get("tool_use_id") in tool_calls:
                     call = tool_calls[c["tool_use_id"]]
@@ -231,7 +243,7 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
 
         call = llm_calls.get(message_id)
         if call is None:
-            trigger, trigger_ms = last_trigger.get(lane, ("user_prompt", None))
+            trigger = last_trigger.get(lane, "user_prompt")
             call = {
                 **common,
                 "event_type": "decision",
@@ -239,7 +251,7 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
                 "model": model,
                 "input_state": {"trigger": trigger},
                 "_tools": [],
-                "_start_ms": trigger_ms,
+                "_start_ms": previous_ms,
             }
             llm_calls[message_id] = call
             order.append(("llm", message_id))

@@ -141,3 +141,15 @@ def test_analyze_endpoint_names_the_bad_file_in_parse_errors():
 )
 def test_tool_operation_names_the_operation_inside_the_call(name, tool_input, expected):
     assert tool_operation(name, tool_input) == expected
+
+
+def test_llm_latency_excludes_idle_time_before_a_turn_starts_without_a_user_record():
+    rows = _transcript()[:-2] + [
+        # session sat idle for hours, then a queued message / task notification resumed it
+        {"type": "queue-operation", "sessionId": "s1", "timestamp": "2026-01-01T05:00:00.000Z"},
+        {"type": "system", "sessionId": "s1", "isSidechain": False, "timestamp": "2026-01-01T05:00:00.500Z"},
+        _assistant("m2", "2026-01-01T05:00:03.500Z", [{"type": "text", "text": "done"}], stop="end_turn"),
+    ]
+    events = [TraceEvent.model_validate(r) for r in normalize_raw_json(rows)]
+    resumed = [e for e in events if e.event_type == "decision"][-1]
+    assert resumed.latency_ms == pytest.approx(3000)
