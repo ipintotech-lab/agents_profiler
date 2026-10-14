@@ -7,16 +7,18 @@ A transcript is a log of many record types (``user``, ``assistant``,
 
 * **LLM call** -- one per API response. Claude Code writes one
   ``assistant`` record per content block, all sharing ``message.id``, so
-  records are grouped by that id. Emitted as ``event_type="decision"``,
-  ``node="llm_call"``, with ``input_state={"trigger": ...}`` (what the
-  model was reacting to: the user prompt, or which tool's result) and
-  ``decision.selected`` = the tools it chose to call, or ``"respond"``.
+  records are grouped by that id. Emitted as ``event_type="decision"``
+  with ``node="llm_call ← <tool>"`` (what the model was reacting to: the
+  user prompt or a tool's result), ``input_state={"trigger": ...}`` (the
+  exact operation, e.g. ``Bash: git status (error)``) and
+  ``decision.selected`` = the tools it chose to call next, or ``"respond"``.
 * **Tool call** -- one per ``tool_use`` block, paired with its
-  ``tool_result`` by ``tool_use_id``. ``node`` is the tool name,
-  ``input_state`` is the tool input, and ``result`` is
-  ``"success:<digest>"`` / ``"error:<digest>"`` where the digest hashes the
-  tool output -- so determinism means "same input -> same output", which is
-  what a cache would need.
+  ``tool_result`` by ``tool_use_id``. ``node`` is the tool plus the
+  operation it performed (see ``tool_operation``: ``Bash: git status``,
+  ``Read: .py``, ``computer: screenshot``), ``input_state`` is the tool
+  input, and ``result`` is ``"success:<digest>"`` / ``"error:<digest>"``
+  where the digest hashes the tool output -- so determinism means "same
+  input -> same output", which is what a cache would need.
 
 Identity: ``trace_id`` = session, ``run_id`` = the user prompt that started
 the turn (``promptId``), ``workflow`` = ``claude-code/<project dir>`` (the session's first cwd).
@@ -31,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 from collections import defaultdict
 from datetime import datetime
 from pathlib import PurePosixPath
@@ -45,6 +48,71 @@ _WEIGHT_CACHE_WRITE_1H = 2.0
 _WEIGHT_OUTPUT = 5.0
 
 _SYNTHETIC_MODEL = "<synthetic>"
+
+# Tool arguments that are only a human-readable label and don't change what
+# the tool does -- dropped so the same command counts as the same input.
+_COSMETIC_TOOL_ARGS = {"Bash": ("description",)}
+
+
+# Programs whose first sub-command is what identifies the operation
+# (``git status`` vs ``git push``), not the program alone.
+_SUBCOMMAND_PROGRAMS = {"git", "gh", "railway", "npm", "pnpm", "yarn", "docker", "kubectl", "uv", "pip", "cargo", "go", "make"}
+
+
+def bash_operation(command: str) -> str:
+    """Name the operation a Bash command performs, e.g.
+    ``cd x && .venv/bin/python -m pytest -q`` -> ``python -m pytest``,
+    ``git push origin main`` -> ``git push``. Falls back to ``other``."""
+    segments = [seg.strip() for seg in command.replace("\n", "&&").replace(";", "&&").split("&&")]
+    for seg in segments:
+        try:
+            tokens = shlex.split(seg)
+        except ValueError:
+            tokens = seg.split()
+        while tokens and ("=" in tokens[0] and not tokens[0].startswith("=")):
+            tokens = tokens[1:]  # VAR=value prefixes
+        if tokens and tokens[0] in ("timeout",):
+            tokens = [t for t in tokens[1:] if not t[:1].isdigit() and not t.startswith("-")] or []
+        if not tokens or tokens[0] in ("cd", "export", "set", "source", "."):
+            continue
+        program = PurePosixPath(tokens[0]).name
+        rest = [t for t in tokens[1:] if not t.startswith("-")]
+        if program.startswith("python") and len(tokens) > 2 and tokens[1] == "-m":
+            return f"python -m {tokens[2]}"
+        if program.startswith("python"):
+            return "python"
+        if program in _SUBCOMMAND_PROGRAMS and rest:
+            return f"{program} {rest[0]}"
+        return program
+    return "other"
+
+
+# Arguments that name *which operation* a tool performs (e.g. the browser
+# tool's ``action``: screenshot / left_click). Checked in order.
+_OPERATION_ARGS = ("action", "operation", "method", "subcommand", "mode", "type")
+# Arguments holding a file path: the operation is the file type, and the
+# path itself is the input.
+_PATH_ARGS = ("file_path", "notebook_path", "path")
+
+
+def tool_operation(name: str, tool_input: dict) -> str:
+    """Node name for a tool call: the tool plus the operation it performed,
+    so the profiler compares like with like (``Bash: git status``,
+    ``Read: .py``, ``computer: screenshot``) instead of lumping every use
+    of a tool together."""
+    command = tool_input.get("command")
+    if name == "Bash" and isinstance(command, str):
+        return f"Bash: {bash_operation(command)}"
+    for arg in _OPERATION_ARGS:
+        value = tool_input.get(arg)
+        if isinstance(value, str) and 0 < len(value) <= 40 and "\n" not in value:
+            return f"{name}: {value}"
+    for arg in _PATH_ARGS:
+        value = tool_input.get(arg)
+        if isinstance(value, str) and value:
+            suffix = PurePosixPath(value).suffix
+            return f"{name}: {suffix or PurePosixPath(value).name}"
+    return name
 
 
 def is_claude_code_transcript(rows: list) -> bool:
@@ -90,8 +158,13 @@ def _user_trigger(record: dict, tool_names_by_id: dict[str, str]) -> str | None:
         return "user_prompt"
     tool_results = [c for c in content or [] if isinstance(c, dict) and c.get("type") == "tool_result"]
     if tool_results:
-        names = sorted({tool_names_by_id.get(c.get("tool_use_id"), "unknown") for c in tool_results})
-        return "tool_result:" + "+".join(names)
+        names = sorted(
+            {
+                tool_names_by_id.get(c.get("tool_use_id"), "unknown") + (" (error)" if c.get("is_error") else "")
+                for c in tool_results
+            }
+        )
+        return " + ".join(names)
     return "user_prompt"
 
 
@@ -104,9 +177,10 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
                 session_cost_by_model[model] = float(usage.get("costUSD") or 0.0)
 
     llm_calls: dict[str, dict] = {}
-    llm_call_order: list[str] = []
+    # Chronological order of all events, so a run reads as the sequence of
+    # steps the agent actually took (pattern mining depends on it).
+    order: list[tuple[str, str]] = []
     tool_calls: dict[str, dict] = {}
-    tool_call_order: list[str] = []
     tool_names_by_id: dict[str, str] = {}
 
     current_prompt: dict[str, str] = {}
@@ -161,14 +235,14 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
             call = {
                 **common,
                 "event_type": "decision",
-                "node": "llm_call",
+                "node": f"llm_call ← {trigger.split(' + ')[0].split(':')[0].removesuffix(' (error)')}",
                 "model": model,
                 "input_state": {"trigger": trigger},
                 "_tools": [],
                 "_start_ms": trigger_ms,
             }
             llm_calls[message_id] = call
-            llm_call_order.append(message_id)
+            order.append(("llm", message_id))
         usage = message.get("usage") or {}
         call["_usage"] = usage
         call["result"] = message.get("stop_reason") or call.get("result")
@@ -179,28 +253,30 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
             if not isinstance(block, dict) or block.get("type") != "tool_use":
                 continue
             tool_id, name = block.get("id"), block.get("name") or "unknown"
-            tool_names_by_id[tool_id] = name
-            call["_tools"].append(name)
+            tool_input = block.get("input") or {}
+            node = tool_operation(name, tool_input)
+            tool_names_by_id[tool_id] = node
+            call["_tools"].append(node)
             tool_calls[tool_id] = {
                 **common,
                 "event_type": "tool_call",
-                "node": name,
+                "node": node,
                 "parent": message_id,
                 "tool": {"name": name},
-                "input_state": block.get("input") or {},
+                "input_state": {
+                    k: v for k, v in tool_input.items() if k not in _COSMETIC_TOOL_ARGS.get(name, ())
+                },
                 "result": "no_result",
                 "_start_ms": ts,
             }
-            tool_call_order.append(tool_id)
+            order.append(("tool", tool_id))
 
     weights_by_model: dict[str, float] = defaultdict(float)
     for call in llm_calls.values():
         call["_weight"] = _weighted_tokens(call["_usage"])
         weights_by_model[call["model"]] += call["_weight"]
 
-    events: list[dict] = []
-    for message_id in llm_call_order:
-        call = llm_calls[message_id]
+    for call in llm_calls.values():
         usage = call.pop("_usage")
         weight = call.pop("_weight")
         tools = call.pop("_tools")
@@ -215,9 +291,6 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
         total_weight = weights_by_model[call["model"]]
         model_cost = session_cost_by_model.get(call["model"], 0.0)
         call["cost"] = model_cost * weight / total_weight if total_weight else 0.0
-        events.append(call)
-    for tool_id in tool_call_order:
-        call = tool_calls[tool_id]
+    for call in tool_calls.values():
         call.pop("_start_ms", None)
-        events.append(call)
-    return events
+    return [llm_calls[key] if kind == "llm" else tool_calls[key] for kind, key in order]

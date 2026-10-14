@@ -31,8 +31,14 @@ def test_hashing_inputs_does_not_change_pipeline_results():
     rows = normalize_raw_json(parse_raw_text(to_jsonl(runs)))
     plain = run_pipeline([TraceEvent.model_validate(r) for r in rows])
     hashed = run_pipeline([TraceEvent.model_validate(r) for r in hash_input_values(rows)])
-    assert plain["mine"] == hashed["mine"]
-    assert plain["recommend"] == hashed["recommend"]
+    # Verdicts must match; only the displayed input values differ (hashed).
+    def verdicts(report):
+        return [
+            (r["node"], r["classification"], r["score"], {k: v for k, v in r["evidence"].items() if k != "inputs"})
+            for r in report["recommend"]
+        ]
+
+    assert verdicts(plain) == verdicts(hashed)
 
 
 def test_convert_cli_writes_hashed_trace_events(tmp_path):
@@ -45,7 +51,7 @@ def test_convert_cli_writes_hashed_trace_events(tmp_path):
     assert '"ls"' not in text  # the Bash command
     assert "list files" not in text  # the user prompt
     events = [TraceEvent.model_validate_json(line) for line in text.splitlines()]
-    bash = next(e for e in events if e.node == "Bash")
+    bash = next(e for e in events if e.node == "Bash: ls")
     assert bash.input_state["command"].startswith("sha256:")
 
 

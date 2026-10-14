@@ -21,6 +21,7 @@ from ingest.trace_schema import TraceEvent
 from .calibration import calibrate_determinism_thresholds
 from .determinism import Classification
 from .mine import mine, observe, recommend, score
+from .patterns import find_repetition
 from .validation import validate
 
 
@@ -169,6 +170,7 @@ def run_pipeline(
             ),
         },
         "recommend": recommendations,
+        "repetition": find_repetition(events, selected_workflow),
         "capacity_context": bpop_capacity_context,
     }
 

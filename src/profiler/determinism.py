@@ -21,7 +21,7 @@ can be overridden per call for experimentation/testing.
 from __future__ import annotations
 
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -50,6 +50,14 @@ MIN_REPEAT_COVERAGE = 0.1
 MIN_REPEATED_OBSERVATIONS = 10
 """Minimum total number of observations belonging to repeated inputs."""
 
+MAX_REPORTED_INPUTS = 25
+"""How many distinct inputs per node the report lists (conflicting ones
+first, then most frequent). Display only -- classification uses all."""
+
+MAX_REPORTED_VALUE_CHARS = 300
+"""Long input values (file contents, edit text) are cut to this length in
+the report."""
+
 
 class Classification(str, Enum):
     DETERMINISTIC = "DETERMINISTIC"
@@ -59,6 +67,14 @@ class Classification(str, Enum):
 
 def _outcome_key(event: TraceEvent) -> tuple[str | None, str | None]:
     return (event.decision.selected if event.decision else None, event.result)
+
+
+def _display_value(value: object) -> object:
+    if not isinstance(value, str):
+        value = json.dumps(value, sort_keys=True, default=str) if isinstance(value, (dict, list)) else value
+    if isinstance(value, str) and len(value) > MAX_REPORTED_VALUE_CHARS:
+        return value[:MAX_REPORTED_VALUE_CHARS] + f"... [{len(value)} chars]"
+    return value
 
 
 def _input_key(event: TraceEvent) -> str:
@@ -79,6 +95,7 @@ class DeterminismEvidence:
     classification: Classification
     reason: str
     distinct_outcomes: list[str] = field(default_factory=list)
+    inputs: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -93,6 +110,7 @@ class DeterminismEvidence:
             "classification": self.classification.value,
             "reason": self.reason,
             "distinct_outcomes": self.distinct_outcomes,
+            "inputs": self.inputs,
         }
 
 
@@ -113,10 +131,14 @@ def classify(
     """
     outcomes_by_input: dict[str, set[tuple[str | None, str | None]]] = defaultdict(set)
     counts_by_input: dict[str, int] = defaultdict(int)
+    outcome_counts_by_input: dict[str, Counter] = defaultdict(Counter)
+    example_by_input: dict[str, dict] = {}
     for e in events:
         key = _input_key(e)
         outcomes_by_input[key].add(_outcome_key(e))
         counts_by_input[key] += 1
+        outcome_counts_by_input[key][_outcome_key(e)] += 1
+        example_by_input.setdefault(key, e.input_state)
 
     occurrences = len(events)
     unique_inputs = len(counts_by_input)
@@ -169,6 +191,27 @@ def classify(
             missing.append(f"only {repeated_observations}/{min_repeated_observations} repeated observations")
         reason = "; ".join(missing) + " -- not enough repeated identical inputs to conclude determinism."
 
+    reported_keys = sorted(
+        counts_by_input, key=lambda k: (len(outcomes_by_input[k]) <= 1, -counts_by_input[k])
+    )[:MAX_REPORTED_INPUTS]
+    inputs = [
+        {
+            "input": {name: _display_value(v) for name, v in example_by_input[k].items()},
+            "count": counts_by_input[k],
+            "conflicting": len(outcomes_by_input[k]) > 1,
+            "verdict": (
+                "differs"
+                if len(outcomes_by_input[k]) > 1
+                else ("consistent" if counts_by_input[k] >= 2 else "seen_once")
+            ),
+            "outcomes": [
+                {"selected": sel, "result": res, "count": n}
+                for (sel, res), n in outcome_counts_by_input[k].most_common()
+            ],
+        }
+        for k in reported_keys
+    ]
+
     return DeterminismEvidence(
         occurrences=occurrences,
         unique_inputs=unique_inputs,
@@ -181,4 +224,5 @@ def classify(
         classification=classification,
         reason=reason,
         distinct_outcomes=distinct_outcomes,
+        inputs=inputs,
     )

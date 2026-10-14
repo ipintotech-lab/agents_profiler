@@ -87,6 +87,17 @@
   .agent-card { border: 1px solid var(--line); background: var(--panel); border-radius: 4px; margin: 14px 0; overflow: hidden; }
   .agent-head { display:flex; justify-content: space-between; align-items: baseline; padding: 14px 18px; background: var(--panel2); border-bottom: 1px solid var(--line); }
   .agent-head .name { color: var(--lime); font-size: 14px; }
+  tr.node-row { cursor: pointer; }
+  tr.node-row:hover td { background: var(--panel2); }
+  tr.node-row td:first-child::before { content: "▸ "; color: var(--faint); }
+  tr.node-row.open td:first-child::before { content: "▾ "; }
+  tr.node-detail > td { padding: 0 0 12px 22px; background: var(--panel2); }
+  tr.node-detail table { margin: 0; font-size: 12px; }
+  .inp { white-space: pre-wrap; word-break: break-all; color: var(--ink); }
+  .inp .k { color: var(--dim); }
+  .oc { display: inline-block; margin: 1px 6px 1px 0; padding: 1px 6px; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; color: var(--dim); }
+  .oc b { color: var(--ink); font-weight: normal; }
+  .conflict { color: var(--amber); }
   .agent-head .sub { color: var(--faint); font-size: 11.5px; }
   .agent-body { padding: 6px 18px 14px; }
 
@@ -290,6 +301,12 @@
     <h2><span class="idx">03</span>Mine <span style="font-size:12px;color:var(--faint)">— agents &amp; action determinism</span></h2>
     <p class="lede">For each agent, every distinct action (node) it takes, and whether the same input ever produced a different outcome.</p>
     <div id="agentsContainer"></div>
+
+    <h2><span class="idx">03·b</span>Repetition <span style="font-size:12px;color:var(--faint)">— what the agent does over and over</span></h2>
+    <p class="lede">Repeated sequences: the same steps in the same order, recurring across runs. "Between steps" is the LLM calls (and their real tokens and cost) spent only on choosing the next step inside the sequence. Combining the sequence into one scripted flow would remove those. Click a row to see an example.</p>
+    <table id="seqTable"><thead><tr><th>Sequence</th><th class="num">Seen</th><th class="num">Runs</th><th class="num">LLM calls between steps</th><th class="num">Tokens between steps</th><th class="num">Cost between steps</th><th class="num">Total cost</th></tr></thead><tbody></tbody></table>
+    <p class="lede">Repeated calls: the same operation with the identical input. If every repeat gave the same output, each repeat after the first was redundant (a cache candidate).</p>
+    <table id="callTable"><thead><tr><th>Operation</th><th>Input</th><th class="num">Seen</th><th>Output</th><th class="num">Redundant</th></tr></thead><tbody></tbody></table>
 
     <h2><span class="idx">04</span>Score</h2>
     <p class="lede" id="scoreFormula"></p>
@@ -985,18 +1002,53 @@ function render(data) {
           <thead><tr><th>Node (action)</th><th>Determinism</th><th class="num">Occurrences</th><th class="num">Avg cost</th><th class="num">Avg latency (ms)</th><th class="num">Score</th></tr></thead>
           <tbody>
             ${info.actions.map(a => `
-              <tr>
+              <tr class="node-row" title="Show the inputs seen at this node">
                 <td>${esc(a.node)}</td>
                 <td><span class="pill ${classificationPillClass(a.classification)}">${classificationLabel(a.classification)}</span></td>
                 <td class="num">${a.occurrences}</td>
                 <td class="num">$${a.avg_cost.toFixed(4)}</td>
                 <td class="num">${a.avg_latency_ms.toFixed(0)}</td>
                 <td class="num ${a.score >= 0.5 ? 'warn' : ''}">${a.score.toFixed(3)}</td>
-              </tr>`).join('')}
+              </tr>
+              <tr class="node-detail" hidden><td colspan="6">${nodeInputsTable(a.evidence)}</td></tr>`).join('')}
           </tbody>
         </table>
       </div>
     </div>`).join('');
+
+  agentsEl.querySelectorAll('tr.node-row').forEach(row => row.addEventListener('click', () => {
+    row.classList.toggle('open');
+    row.nextElementSibling.hidden = !row.classList.contains('open');
+  }));
+
+  // Repetition
+  const rep = data.repetition || { sequences: [], calls: [] };
+  const inputText = inp => Object.entries(inp).map(([k, v]) => `<span class="k">${esc(k)}:</span> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}`).join('\n');
+  document.querySelector('#seqTable tbody').innerHTML = rep.sequences.length ? rep.sequences.map(p => `
+    <tr class="node-row">
+      <td>${p.steps.map(st => `<span class="oc"><b>${esc(st)}</b></span>`).join('→ ')}</td>
+      <td class="num">${p.occurrences}</td>
+      <td class="num">${p.runs}</td>
+      <td class="num">${p.llm_calls_between_steps}</td>
+      <td class="num">${p.tokens_between_steps.toLocaleString()}</td>
+      <td class="num">$${p.cost_between_steps.toFixed(2)}</td>
+      <td class="num">$${p.sequence_cost.toFixed(2)}</td>
+    </tr>
+    <tr class="node-detail" hidden><td colspan="7"><table><thead><tr><th>Example step</th><th>Input</th></tr></thead><tbody>
+      ${p.example.map(st => `<tr><td>${esc(st.node)}</td><td class="inp">${inputText(st.input) || '<span class="k">(empty input)</span>'}</td></tr>`).join('')}
+    </tbody></table></td></tr>`).join('') : '<tr><td colspan="7">No sequence repeated 3+ times.</td></tr>';
+  document.querySelector('#callTable tbody').innerHTML = rep.calls.length ? rep.calls.map(c => `
+    <tr>
+      <td>${esc(c.node)}</td>
+      <td class="inp">${inputText(c.input) || '<span class="k">(empty input)</span>'}</td>
+      <td class="num">${c.count}</td>
+      <td>${c.same_output ? '<span class="pill det">same every time</span>' : `<span class="pill nondet">${c.distinct_outputs} different</span>`}</td>
+      <td class="num">${c.redundant_calls}</td>
+    </tr>`).join('') : '<tr><td colspan="5">No call repeated with an identical input.</td></tr>';
+  document.querySelectorAll('#seqTable tr.node-row').forEach(row => row.addEventListener('click', () => {
+    row.classList.toggle('open');
+    row.nextElementSibling.hidden = !row.classList.contains('open');
+  }));
 
   // Score
   document.getElementById('scoreFormula').textContent = data.score.formula +
@@ -1065,6 +1117,39 @@ function classificationPillClass(classification) {
   if (classification === 'DETERMINISTIC') return 'det';
   if (classification === 'NON_DETERMINISTIC') return 'nondet';
   return 'insuff';
+}
+
+function outcomeLabel(o) {
+  if (o.selected) return o.result && o.result !== 'tool_use' ? `${o.selected} · ${o.result}` : o.selected;
+  const r = o.result || '—';
+  const m = r.match(/^(success|error):([0-9a-f]+)$/);
+  return m ? `${m[1]} · output ${m[2].slice(0, 6)}` : r;
+}
+
+function verdictLabel(v) {
+  if (v === 'differs') return '<span class="pill nondet">differs</span> ';
+  if (v === 'consistent') return '<span class="pill det">consistent</span> ';
+  return '<span class="pill">seen once</span> ';
+}
+
+function nodeInputsTable(ev) {
+  const inputs = ev.inputs || [];
+  if (!inputs.length) return '<p class="lede">No inputs recorded for this node.</p>';
+  const shown = inputs.length < ev.unique_inputs ? `top ${inputs.length} of ${ev.unique_inputs}` : `all ${ev.unique_inputs}`;
+  return `<table>
+    <thead><tr><th>Input (${shown} distinct, conflicting first)</th><th class="num">Seen</th><th>Verdict · outcomes</th></tr></thead>
+    <tbody>${inputs.map(i => {
+      const entries = Object.entries(i.input);
+      const inp = entries.length
+        ? entries.map(([k, v]) => `<span class="k">${esc(k)}:</span> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}`).join('\n')
+        : '<span class="k">(empty input)</span>';
+      return `<tr>
+        <td class="inp">${inp}</td>
+        <td class="num">${i.count}</td>
+        <td>${verdictLabel(i.verdict)}${i.outcomes.map(o => `<span class="oc"><b>${esc(outcomeLabel(o))}</b> ×${o.count}</span>`).join('')}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
 }
 
 function classificationLabel(classification) {

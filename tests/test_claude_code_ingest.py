@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from api.main import app
 from ingest import TraceEvent, normalize_raw_json
+from ingest.claude_code import tool_operation
 
 
 def _assistant(msg_id, ts, content, usage=None, stop="tool_use", cwd="/home/u/proj"):
@@ -56,10 +57,12 @@ def test_claude_code_transcript_converts_to_llm_and_tool_events():
     assert {e.trace_id for e in events} == {"s1"}
 
     first, second = llm
+    assert first.node == "llm_call ← user_prompt"
     assert first.input_state == {"trigger": "user_prompt"}
-    assert first.decision.selected == "Bash"
+    assert first.decision.selected == "Bash: ls"
     assert first.latency_ms == pytest.approx(2000)
-    assert second.input_state == {"trigger": "tool_result:Bash"}
+    assert second.node == "llm_call ← Bash"
+    assert second.input_state == {"trigger": "Bash: ls"}
     assert second.decision.selected == "respond"
     assert second.result == "end_turn"
 
@@ -68,7 +71,7 @@ def test_claude_code_transcript_converts_to_llm_and_tool_events():
     assert second.cost / first.cost == pytest.approx((10 + 5 * 30) / (10 + 5 * 10))
 
     bash = tools[0]
-    assert bash.node == "Bash"
+    assert bash.node == "Bash: ls"
     assert bash.tool.name == "Bash"
     assert bash.input_state == {"command": "ls"}
     assert bash.parent == "m1"
@@ -123,3 +126,18 @@ def test_analyze_endpoint_names_the_bad_file_in_parse_errors():
     )
     assert response.status_code == 422
     assert "bad.json" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("name", "tool_input", "expected"),
+    [
+        ("Bash", {"command": "cd /x && .venv/bin/python -m pytest -q"}, "Bash: python -m pytest"),
+        ("Bash", {"command": "PYTHONPATH=src git push origin main"}, "Bash: git push"),
+        ("Read", {"file_path": "/repo/src/api/main.py"}, "Read: .py"),
+        ("Edit", {"file_path": "/repo/Makefile", "old_string": "a", "new_string": "b"}, "Edit: Makefile"),
+        ("mcp__chrome__computer", {"action": "screenshot", "tabId": 1}, "mcp__chrome__computer: screenshot"),
+        ("WebFetch", {"url": "https://example.com", "prompt": "summarize"}, "WebFetch"),
+    ],
+)
+def test_tool_operation_names_the_operation_inside_the_call(name, tool_input, expected):
+    assert tool_operation(name, tool_input) == expected
