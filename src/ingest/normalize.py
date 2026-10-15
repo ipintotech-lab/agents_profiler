@@ -2,12 +2,13 @@
 ``TraceEvent`` expects, so an uploaded file doesn't have to already match
 this app's exact schema to be analyzed.
 
-Handles four cases beyond a bare list of already-correct TraceEvent
+Handles these cases beyond a bare list of already-correct TraceEvent
 dicts: events wrapped under a different top-level key (``{"events": [...]}``,
 ``{"data": {"traces": [...]}}``), an OpenTelemetry OTLP JSON span export
 (``resourceSpans`` / ``scopeSpans`` / ``spans``), a Claude Code session
-transcript (see ``claude_code.py``), and per-record field-name
-aliases (``spanId`` -> ``run_id``, ``duration_ms`` -> ``latency_ms``, etc).
+transcript (see ``claude_code.py``), OpenAI-style chat trajectories (see
+``chat_trajectory.py``), FreeInference agentic-trace sessions (see
+``freeinference.py``), and per-record field-name aliases (``spanId`` -> ``run_id``, ``duration_ms`` -> ``latency_ms``, etc).
 
 A record that still can't be mapped to the required TraceEvent fields
 after normalization raises ``ValueError`` naming the missing fields --
@@ -19,7 +20,9 @@ import hashlib
 import json
 from typing import Any
 
+from .chat_trajectory import convert_chat_trajectories, is_chat_trajectory
 from .claude_code import convert_claude_code_transcript, is_claude_code_transcript
+from .freeinference import convert_freeinference_sessions, is_freeinference_session
 
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "trace_id": ("trace_id", "traceId", "traceID", "trace"),
@@ -88,8 +91,14 @@ def _unwrap_container(parsed: Any) -> list:
     if isinstance(parsed, list):
         if is_claude_code_transcript(parsed):
             return convert_claude_code_transcript(parsed)
+        if parsed and all(is_freeinference_session(r) for r in parsed):
+            return convert_freeinference_sessions(parsed)
+        if parsed and all(is_chat_trajectory(r) for r in parsed):
+            return convert_chat_trajectories(parsed)
         return parsed
     if isinstance(parsed, dict):
+        if is_freeinference_session(parsed) or is_chat_trajectory(parsed):
+            return _unwrap_container([parsed])
         otel_events = _unwrap_otel(parsed)
         if otel_events is not None:
             return otel_events

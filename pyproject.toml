@@ -16,6 +16,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "python-multipart>=0.0.9",
+    "zstandard>=0.22; python_version < '3.14'",  # .zst Hugging Face trace files; 3.14+ has compression.zstd
 ]
 
 [project.optional-dependencies]

@@ -153,6 +153,37 @@ python -m ingest.convert ~/.claude/projects/<project>/*.jsonl --hash-inputs -o t
 curl -F file=@traces.jsonl localhost:8000/analyze
 ```
 
+### Hugging Face datasets
+
+Public agent-trace datasets can be read straight from a Hugging Face link
+(`src/ingest/huggingface.py`, plain HTTP -- no `huggingface_hub` needed).
+It streams only the first `--limit` records (sessions / trajectories) of
+one JSON / JSON Lines file, `.zst` / `.gz` included. Two dataset formats
+are converted to trace events besides the ones above:
+
+- [`cx-cmu/agent_trajectories`](https://huggingface.co/datasets/cx-cmu/agent_trajectories)
+  -- OpenAI-style chat trajectories (`id` + `messages`; `chat_trajectory.py`).
+  Gated: accept its conditions on the dataset page, then set `HF_TOKEN` or
+  run `hf auth login`. No per-message tokens or cost in the format.
+- [`harvardMadsys/freeinference_agentic_trace`](https://huggingface.co/datasets/harvardMadsys/freeinference_agentic_trace)
+  -- gateway sessions (`session_id` + `requests`; `freeinference.py`), with
+  real tokens and latency but no cost. Argument values are anonymized, so
+  a call with a placeholder (`<path>`) never counts as a repeated input.
+
+```bash
+python -m ingest.huggingface https://huggingface.co/datasets/cx-cmu/agent_trajectories --list
+python -m ingest.huggingface https://huggingface.co/datasets/cx-cmu/agent_trajectories \
+    --file swebench.jsonl --limit 10 --out-dir cmu_sessions    # raw records, one JSON file each
+python -m ingest.convert https://huggingface.co/datasets/cx-cmu/agent_trajectories \
+    --hf-file swebench.jsonl --limit 10 -o traces.jsonl         # converted trace events
+curl -F hf_url=https://huggingface.co/datasets/cx-cmu/agent_trajectories \
+    -F hf_file=swebench.jsonl -F hf_limit=10 -F hf_token=$HF_TOKEN localhost:8000/analyze
+```
+
+The dashboard's "Hugging Face" tab does the same: paste a link, "List
+files", pick one, run. `/analyze` caps `hf_limit` at 500 records; a gated
+dataset needs a token in the form or `HF_TOKEN` set on the server.
+
 ## Setup
 
 ```bash

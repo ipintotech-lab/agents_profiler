@@ -165,6 +165,7 @@
 
   <div class="modetabs">
     <div class="modetab active" id="tabUpload" data-mode="upload">Upload file</div>
+    <div class="modetab" id="tabHF" data-mode="hf">Hugging Face</div>
     <div class="modetab" id="tabGenerate" data-mode="generate">Generate sample data</div>
     <div class="modetab" id="tabSweep" data-mode="sweep">Run tests</div>
     <div class="modetab" id="tabPOC" data-mode="poc">POC: Stabilization</div>
@@ -180,6 +181,34 @@
         <label for="workflow">Workflow</label>
         <select id="workflow" name="workflow"><option value="">(auto: most events)</option></select>
       </div>
+    </div>
+
+    <div id="hfPanel" hidden>
+      <div class="row">
+        <div class="field grow">
+          <label for="hfUrl">Dataset link <span class="hint">e.g. https://huggingface.co/datasets/cx-cmu/agent_trajectories</span></label>
+          <input type="text" id="hfUrl" placeholder="https://huggingface.co/datasets/<org>/<name>">
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <button type="button" class="ghost" id="hfListBtn">List files</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field grow">
+          <label for="hfFile">File <span class="hint">JSON / JSON Lines (.zst / .gz ok)</span></label>
+          <select id="hfFile"><option value="">(the file the link names)</option></select>
+        </div>
+        <div class="field">
+          <label for="hfLimit">Records <span class="hint">sessions to read, 1–500</span></label>
+          <input type="number" id="hfLimit" min="1" max="500" value="10">
+        </div>
+        <div class="field">
+          <label for="hfToken">Token <span class="hint">gated datasets only</span></label>
+          <input type="password" id="hfToken" placeholder="hf_…" autocomplete="off">
+        </div>
+      </div>
+      <div class="hint" id="hfSummary">Gated datasets (like cx-cmu/agent_trajectories) need their conditions accepted on the dataset page, and a token with access.</div>
     </div>
 
     <div id="generatePanel" hidden>
@@ -468,6 +497,8 @@ const uploadPanel = document.getElementById('uploadPanel');
 const generatePanel = document.getElementById('generatePanel');
 const tabUpload = document.getElementById('tabUpload');
 const tabGenerate = document.getElementById('tabGenerate');
+const tabHF = document.getElementById('tabHF');
+const hfPanel = document.getElementById('hfPanel');
 const tabSweep = document.getElementById('tabSweep');
 const tabPOC = document.getElementById('tabPOC');
 const genSummaryEl = document.getElementById('genSummary');
@@ -491,10 +522,12 @@ function setMode(m) {
   mode = m;
   tabUpload.classList.toggle('active', m === 'upload');
   tabGenerate.classList.toggle('active', m === 'generate');
+  tabHF.classList.toggle('active', m === 'hf');
   tabSweep.classList.toggle('active', m === 'sweep');
   tabPOC.classList.toggle('active', m === 'poc');
   uploadPanel.hidden = m !== 'upload';
   generatePanel.hidden = m !== 'generate';
+  hfPanel.hidden = m !== 'hf';
   sweepPanel.hidden = m !== 'sweep';
   pocPanel.hidden = m !== 'poc';
   formulaRow.hidden = m === 'sweep' || m === 'poc';
@@ -507,6 +540,40 @@ function setMode(m) {
 }
 tabUpload.addEventListener('click', () => setMode('upload'));
 tabGenerate.addEventListener('click', () => setMode('generate'));
+tabHF.addEventListener('click', () => setMode('hf'));
+
+// a file listed for one dataset means nothing for another
+document.getElementById('hfUrl').addEventListener('input', () => {
+  document.getElementById('hfFile').innerHTML = '<option value="">(the file the link names)</option>';
+});
+
+const hfListBtn = document.getElementById('hfListBtn');
+hfListBtn.addEventListener('click', async () => {
+  errEl.style.display = 'none';
+  const url = document.getElementById('hfUrl').value.trim();
+  if (!url) { showErr('Paste a Hugging Face dataset link first.'); return; }
+  hfListBtn.disabled = true;
+  hfListBtn.textContent = 'Listing…';
+  try {
+    const fd = new FormData();
+    fd.append('url', url);
+    const token = document.getElementById('hfToken').value.trim();
+    if (token) fd.append('token', token);
+    const res = await fetch('/huggingface/files', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Listing failed.');
+    document.getElementById('hfFile').innerHTML = data.files.length
+      ? data.files.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('')
+      : '<option value="">(no JSON / JSON Lines files)</option>';
+    document.getElementById('hfSummary').innerHTML =
+      `<span class="ok">${data.files.length} readable file${data.files.length === 1 ? '' : 's'}</span> in ${esc(data.repo_id)}.`;
+  } catch (e) {
+    showErr(e.message || String(e));
+  } finally {
+    hfListBtn.disabled = false;
+    hfListBtn.textContent = 'List files';
+  }
+});
 tabSweep.addEventListener('click', () => setMode('sweep'));
 tabPOC.addEventListener('click', () => setMode('poc'));
 
@@ -912,6 +979,15 @@ form.addEventListener('submit', async (ev) => {
     if (generatedSummary && generatedSummary.ground_truth) {
       fd.append('ground_truth', JSON.stringify(generatedSummary.ground_truth));
     }
+  } else if (mode === 'hf') {
+    const url = document.getElementById('hfUrl').value.trim();
+    if (!url) { showErr('Paste a Hugging Face dataset link first.'); runBtn.disabled = false; runBtn.textContent = 'Run pipeline'; return; }
+    fd.append('hf_url', url);
+    const hfFile = document.getElementById('hfFile').value;
+    if (hfFile) fd.append('hf_file', hfFile);
+    fd.append('hf_limit', document.getElementById('hfLimit').value || '10');
+    const token = document.getElementById('hfToken').value.trim();
+    if (token) fd.append('hf_token', token);
   } else {
     const fileInput = document.getElementById('file');
     if (!fileInput.files.length) { showErr('Choose a trace file first.'); runBtn.disabled = false; runBtn.textContent = 'Run pipeline'; return; }

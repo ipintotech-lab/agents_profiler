@@ -15,6 +15,7 @@ import random
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
 
@@ -28,6 +29,7 @@ from bpop import (
 )
 from bpop.result import BPOPResult
 from ingest import DEFAULT_DEMAND_MODEL, normalize_raw_json, parse_raw_text
+from ingest.huggingface import fetch_records, list_data_files, parse_hf_url
 from ingest.trace_schema import TraceEvent
 from profiler import run_pipeline, run_poc, run_sweep
 from rawdata_gen import (
@@ -130,9 +132,43 @@ def _parse_trace_events(raw: bytes, filename: str = "uploaded file") -> list[Tra
         raise HTTPException(status_code=422, detail=f"could not parse {filename}: {exc}") from exc
 
 
+# Records read from a Hugging Face dataset per request -- each record is a
+# whole session/trajectory, so this bounds download size and pipeline time.
+HF_MAX_LIMIT = 500
+
+
+def _hf_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, PermissionError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, FileNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=400, detail=str(exc))
+    return HTTPException(status_code=502, detail=f"could not read from Hugging Face: {exc}")
+
+
+@app.post("/huggingface/files")
+async def huggingface_files(url: str = Form(...), token: str | None = Form(None)) -> dict:
+    """The JSON / JSON Lines files in a Hugging Face dataset that /analyze
+    can read, for picking one in the dashboard. A link that already names a
+    file returns just that file."""
+    try:
+        ref = parse_hf_url(url)
+        files = await run_in_threadpool(list_data_files, ref, token or None)
+    except (ValueError, RuntimeError, OSError) as exc:
+        raise _hf_error(exc) from exc
+    if ref.path and ref.path in files:
+        files = [ref.path]
+    return {"repo_id": ref.repo_id, "revision": ref.revision, "files": files}
+
+
 @app.post("/analyze")
 async def analyze(
-    file: list[UploadFile] = File(...),  # noqa: B008
+    file: list[UploadFile] | None = File(None),  # noqa: B008
+    hf_url: str | None = Form(None),
+    hf_file: str | None = Form(None),
+    hf_limit: int = Form(10),
+    hf_token: str | None = Form(None),
     workflow: str | None = Form(None),
     unit_cost: float | None = Form(None),
     unit_value: float | None = Form(None),
@@ -149,6 +185,11 @@ async def analyze(
     content twice is rejected, since duplicated events would read as
     repeated identical inputs and inflate determinism evidence.
 
+    ``hf_url`` adds the first ``hf_limit`` records of a Hugging Face
+    dataset file (``hf_file``, or the one the link names), fetched
+    server-side; ``hf_token`` (or the server's ``HF_TOKEN``) is needed for
+    gated datasets.
+
     ``ground_truth`` is an optional JSON-encoded ``{"agent/node": {"determinism_rate": float}}``
     manifest (as returned by ``/generate``) -- when present, the report
     includes a "validation" section scoring the profiler's classification
@@ -157,7 +198,9 @@ async def analyze(
     events: list[TraceEvent] = []
     file_summaries: list[dict] = []
     seen_digests: dict[str, str] = {}
-    for upload in file:
+    if not file and not hf_url:
+        raise HTTPException(status_code=400, detail="upload a trace file or give a Hugging Face dataset link")
+    for upload in file or []:
         raw = await upload.read()
         name = upload.filename or f"file {len(file_summaries) + 1}"
         digest = hashlib.sha256(raw).hexdigest()
@@ -167,6 +210,20 @@ async def analyze(
         file_events = _parse_trace_events(raw, name)
         events.extend(file_events)
         file_summaries.append({"name": name, "num_events": len(file_events)})
+    if hf_url:
+        if not 1 <= hf_limit <= HF_MAX_LIMIT:
+            raise HTTPException(status_code=400, detail=f"hf_limit must be between 1 and {HF_MAX_LIMIT}")
+        try:
+            records, path = await run_in_threadpool(fetch_records, hf_url, hf_file or None, hf_limit, hf_token or None)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise _hf_error(exc) from exc
+        name = f"{parse_hf_url(hf_url).repo_id}/{path}"
+        try:
+            hf_events = [TraceEvent.model_validate(row) for row in normalize_raw_json(records)]
+        except (ValidationError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=f"could not parse {name}: {exc}") from exc
+        events.extend(hf_events)
+        file_summaries.append({"name": name, "num_events": len(hf_events), "num_records": len(records)})
     parsed_ground_truth = None
     if ground_truth:
         try:
