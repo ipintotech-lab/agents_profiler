@@ -307,7 +307,7 @@ hf auth login</pre>
           <li><b>Pick the format and size</b> &mdash; more lines means more repeated inputs, so more findings show up (2,000 lines is a good start).</li>
           <li><b>Click "Generate"</b>, then <b>"Run pipeline"</b>.</li>
         </ol>
-        <p><b>What to expect</b> (agent trace events, 2,000 lines): the report finds most of what the analyzed agent was built to contain and none of its traps. Below about 500 lines it finds almost nothing, because inputs rarely repeat.</p>
+        <p><b>What to expect</b> (agent trace events, 2,000 lines): the report finds most of what the analyzed agent was built to contain and none of its traps. The tab won't go below 1,000 lines: with less, inputs rarely repeat and the report finds almost nothing.</p>
         <p style="margin-top:10px"><b>What the report shows</b> (after "Run pipeline"):</p>
         <ul>
           <li><b>01 Summary</b> &mdash; where the money goes and what to change: each repeat worth fixing, the evidence, the observed saving and the fix (cache it, use a rule, script the steps).</li>
@@ -386,8 +386,8 @@ hf auth login</pre>
           <input type="number" id="actions6" min="4" max="20" value="8">
         </div>
         <div class="field">
-          <label for="totalLines">Total lines <span class="hint">multiple of 20. Findings need repeated inputs: under ~500 lines expect almost none, 2,000 finds most</span></label>
-          <input type="number" id="totalLines" min="20" step="20" value="2000" placeholder="1 run per agent">
+          <label for="totalLines">Total lines <span class="hint">1,000 or more, multiple of 20. Findings need the same input to repeat, so smaller data finds almost nothing; 2,000 finds most</span></label>
+          <input type="number" id="totalLines" min="1000" step="20" value="2000">
         </div>
         <div class="field">
           <label for="variance">Variance <span class="hint">spread of cost/latency/tokens</span></label>
@@ -680,6 +680,17 @@ hf auth login</pre>
 
 <script>
 const pipelineEl = document.getElementById('pipeline');
+// below ~1,000 lines inputs rarely repeat, so the report finds almost
+// nothing and looks broken: raise anything smaller (or empty) to the minimum
+const MIN_TOTAL_LINES = 1000;
+function totalLinesValue() {
+  const el = document.getElementById('totalLines');
+  let n = parseInt(el.value, 10);
+  if (!(n >= MIN_TOTAL_LINES)) n = MIN_TOTAL_LINES;
+  n = Math.round(n / 20) * 20;
+  el.value = n;
+  return String(n);
+}
 const stages = ['observe','profile','mine','score','recommend'];
 
 function setStage(name, state) {
@@ -851,7 +862,7 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
   if (genFormatEl.value === 'claude_code') { generateClaudeCode(); return; }
   const agentCount = parseInt(agentCountEl.value, 10);
   const actionsPerAgent = [1, 2, 3, 4, 5, 6].slice(0, agentCount).map(i => parseInt(document.getElementById(`actions${i}`).value, 10));
-  const totalLinesRaw = document.getElementById('totalLines').value;
+  const totalLinesRaw = totalLinesValue();
   const variance = document.getElementById('variance').value;
   const seedRaw = document.getElementById('seed').value;
   const body = { agent_count: agentCount, actions_per_agent: actionsPerAgent, variance };
@@ -937,7 +948,7 @@ validateSeedBtn.addEventListener('click', async () => {
     const agentCount = parseInt(agentCountEl.value, 10);
     body.agent_count = agentCount;
     body.actions_per_agent = [1, 2, 3, 4, 5, 6].slice(0, agentCount).map(i => parseInt(document.getElementById(`actions${i}`).value, 10));
-    const totalLinesRaw = document.getElementById('totalLines').value;
+    const totalLinesRaw = totalLinesValue();
     if (totalLinesRaw !== '') body.total_lines = parseInt(totalLinesRaw, 10);
     body.variance = document.getElementById('variance').value;
 
@@ -969,7 +980,7 @@ validateSeedRangeBtn.addEventListener('click', async () => {
       actions_per_agent: [1, 2, 3, 4, 5, 6].slice(0, agentCount).map(i => parseInt(document.getElementById(`actions${i}`).value, 10)),
       variance: document.getElementById('variance').value,
     };
-    const totalLinesRaw = document.getElementById('totalLines').value;
+    const totalLinesRaw = totalLinesValue();
     if (totalLinesRaw !== '') body.total_lines = parseInt(totalLinesRaw, 10);
 
     const res = await fetch('/validate_seed_range', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

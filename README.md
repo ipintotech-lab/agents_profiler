@@ -201,7 +201,8 @@ and, when ground truth is sent, per-node determinism. **06 Validate**
 then grades each "same answer every time" call against the known answer.
 "Not judged: too few repeats" there is not an error: a step is only called
 after the same input repeats, so small data (a few hundred lines) leaves most
-steps unjudged. The dashboard defaults to 2,000 lines.
+steps unjudged. The dashboard defaults to 2,000 lines and won't generate fewer
+than 1,000 (the CLI and `/generate` still accept any multiple of 20).
 
 ### POC: expected vs. found
 
