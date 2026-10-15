@@ -121,6 +121,24 @@
   .gensummary .ok { color: var(--green); }
   .gensummary .err-text { color: var(--red); }
   footer { margin-top: 60px; border-top: 1px solid var(--line); padding-top: 18px; color: var(--faint); font-size: 11px; }
+  .takeaway { color: var(--ink); font-size: 13px; margin: 4px 0 12px; max-width: 820px; }
+  .takeaway:empty { display: none; }
+  .takeaway b { color: var(--lime); font-weight: 400; }
+  details.advanced { border: 1px solid var(--line); border-radius: 4px; padding: 10px 16px; margin: 28px 0 0; background: var(--panel); }
+  details.advanced > summary, details.glossary > summary { cursor: pointer; color: var(--dim); font-size: 13px; }
+  details.advanced > summary .k { color: var(--faint); font-size: 11.5px; }
+  details.glossary { margin: 6px 0 0; }
+  details.glossary dl { display: grid; grid-template-columns: minmax(160px, 220px) 1fr; gap: 6px 16px; margin: 12px 0; font-size: 12.5px; }
+  details.glossary dt { color: var(--ink); }
+  details.glossary dd { color: var(--dim); }
+  .opt-type { color: var(--lime); font-size: 11px; letter-spacing: .04em; }
+  .opt-desc { color: var(--dim); font-size: 12px; }
+  tr.opt-head td { background: var(--panel2); padding-top: 12px; }
+  .term { border-bottom: 1px dotted var(--faint); cursor: help; }
+  .sub-cost { display: block; color: var(--faint); font-size: 10.5px; }
+  tr.rare-toggle td { color: var(--dim); cursor: pointer; font-size: 12px; }
+  tr.rare-toggle td::before { content: none !important; }
+  @media (max-width: 640px) { details.glossary dl { grid-template-columns: 1fr; } }
   #report { display: none; }
   [hidden] { display: none !important; }
 </style>
@@ -131,7 +149,7 @@
   <div class="wrap">
     <div class="kicker">B-POP · Test Environment</div>
     <h1>Upload traces, tune the formula, run the pipeline</h1>
-    <p class="sub">Upload a normalized agent-workflow trace file (JSON array or JSONL) and run it through Observe → Profile → Mine → Score → Recommend. Profile solves the B-POP leader/follower capacity problem; Mine/Score/Recommend classify each agent's actions as deterministic or not and flag the costly, non-reproducible ones.</p>
+    <p class="sub">Upload agent traces (JSON array, JSONL, OpenTelemetry, or Claude Code sessions) to see where the money goes, what the agent repeats, and which repeats could be scripted, cached, or replaced by a rule.</p>
   </div>
 </header>
 
@@ -281,12 +299,53 @@
 
   <div id="report">
 
-    <h2><span class="idx">01</span>Observe</h2>
+    <h2><span class="idx">01</span>Summary <span style="font-size:12px;color:var(--faint)">— where the money goes and what to change</span></h2>
+    <div class="stats" id="summaryStats"></div>
+    <p class="takeaway" id="summaryTakeaway"></p>
+    <table id="oppTable"><thead><tr><th>What repeats</th><th>Evidence</th><th class="num">Saving</th><th>Do this</th></tr></thead><tbody></tbody></table>
+    <p class="lede" id="oppNotes"></p>
+
+    <details class="glossary" id="glossary">
+      <summary>What the terms mean</summary>
+      <dl>
+        <dt>node</dt><dd>One kind of operation, e.g. <code>Bash: git push</code> or <code>Read: .py</code>.</dd>
+        <dt>llm_call ← Bash</dt><dd>The LLM call made right after a Bash result: the model reading it and deciding what to do next.</dd>
+        <dt>starting point (trigger)</dt><dd>What an action reacted to: the user's prompt, or the result of the previous step.</dd>
+        <dt>LLM calls between steps</dt><dd>Calls whose only job was to choose the next step. A script that runs the steps in order doesn't need them.</dd>
+        <dt>deterministic</dt><dd>The same input always gave the same result, seen often enough to trust it.</dd>
+        <dt>non-deterministic</dt><dd>The same input gave different results at least once.</dd>
+        <dt>insufficient evidence</dt><dd>The same input wasn't repeated enough times to judge.</dd>
+        <dt>business fingerprint</dt><dd>"Same request": the same node, starting point and input.</dd>
+        <dt>context fingerprint</dt><dd>Same request <i>and</i> the same result from the step that triggered it.</dd>
+        <dt>execution fingerprint</dt><dd>Same request, same triggering result, same model and agent version.</dd>
+        <dt>agreement</dt><dd>Across requests seen more than once, how often they got their most common answer. 100% means repeats always matched.</dd>
+        <dt>dominant output · dominant rate</dt><dd>The most common answer for a request, and how often it came back ("same answer 9 of 10 times" = 90%).</dd>
+        <dt>result A, B, …</dt><dd>Tool outputs are stored as hashes, so different outputs are lettered within each row instead. Same letter = identical output.</dd>
+        <dt>redundant</dt><dd>Repeats after the first that returned exactly the same output.</dd>
+        <dt>saving</dt><dd>The observed cost of the calls that wouldn't have run. Measured from these traces, not forecast.</dd>
+      </dl>
+    </details>
+
+    <h2><span class="idx">02</span>Repetition <span style="font-size:12px;color:var(--faint)">— what the agent does over and over</span></h2>
+    <p class="takeaway" id="seqTakeaway"></p>
+    <p class="lede">Repeated sequences: the same steps in the same order, recurring across runs. "Between steps" is the LLM calls (and their real tokens and cost) spent only on choosing the next step inside the sequence. Combining the sequence into one scripted flow would remove those. Click a row to see an example.</p>
+    <table id="seqTable"><thead><tr><th>Sequence</th><th class="num">Seen</th><th class="num">Runs</th><th class="num">LLM calls between steps</th><th class="num">Tokens between steps</th><th class="num">Cost between steps</th><th class="num">Total cost</th></tr></thead><tbody></tbody></table>
+    <p class="takeaway" id="callTakeaway"></p>
+    <p class="lede">Repeated calls: the same operation with the identical input. If every repeat gave the same output, each repeat after the first was redundant (a cache candidate).</p>
+    <table id="callTable"><thead><tr><th>Operation</th><th>Input</th><th>User input</th><th class="num">Seen</th><th>Output</th><th class="num">Redundant</th></tr></thead><tbody></tbody></table>
+
+    <h2><span class="idx">03</span>Nodes <span style="font-size:12px;color:var(--faint)">— every distinct operation, costliest first</span></h2>
+    <p class="takeaway" id="mineTakeaway"></p>
+    <p class="lede">For each agent, every distinct operation (node) it ran, and whether the same input ever produced a different result. <b>Cost</b> includes the LLM call that decided to run it, so a tool isn't shown as free. Click a node to see what started each action and how often the same request got the same answer. Terms are explained in <a href="#glossary">What the terms mean</a>.</p>
+    <div id="agentsContainer"></div>
+
+    <h2><span class="idx">04</span>Upload contents</h2>
     <p class="lede">What's in the upload — no interpretation yet.</p>
     <div class="stats" id="observeStats"></div>
     <table id="workflowTable"><thead><tr><th>Workflow</th><th class="num">Events</th><th class="num">Runs</th></tr></thead><tbody></tbody></table>
 
-    <h2><span class="idx">02</span>Profile <span style="font-size:12px;color:var(--faint)">— B-POP leader/follower solve</span></h2>
+    <details class="advanced">
+    <summary>Capacity planning (B-POP leader/follower solve) <span class="k">— advanced, sizes LLM-call capacity; not about repetition</span></summary>
     <p class="lede">Capacity-allocation problem built from the selected workflow, solved exactly via PPOPT + PuLP.</p>
     <table id="provenanceTable"><thead><tr><th>Formula field</th><th>Value</th><th>Status</th><th>How it was obtained</th></tr></thead><tbody></tbody></table>
     <p class="lede" style="margin-top:14px">Observed per-run LLM-call usage, the distribution the demand model is drawn from.</p>
@@ -302,25 +361,18 @@
     <p class="lede">unit_value is ASSUMED, not observed — this shows how the leader/follower optimum moves if that assumption changes, instead of presenting one ratio's result as certain.</p>
     <table id="sensitivityTable"><thead><tr><th>Ratio</th><th class="num">unit_value</th><th class="num">x*</th><th class="num">y*</th><th class="num">objective</th></tr></thead><tbody></tbody></table>
 
-    <h2><span class="idx">03</span>Mine <span style="font-size:12px;color:var(--faint)">— agents &amp; action determinism</span></h2>
-    <p class="lede">For each agent, every distinct action (node) it takes, and whether the same input ever produced a different outcome. Click a node to see its actions by starting point (what triggered them), grouped by action fingerprint: business (node + trigger + input), context (+ the triggering step's result), execution (+ model and agent version).</p>
-    <div id="agentsContainer"></div>
+    </details>
 
-    <h2><span class="idx">03·b</span>Repetition <span style="font-size:12px;color:var(--faint)">— what the agent does over and over</span></h2>
-    <p class="lede">Repeated sequences: the same steps in the same order, recurring across runs. "Between steps" is the LLM calls (and their real tokens and cost) spent only on choosing the next step inside the sequence. Combining the sequence into one scripted flow would remove those. Click a row to see an example.</p>
-    <table id="seqTable"><thead><tr><th>Sequence</th><th class="num">Seen</th><th class="num">Runs</th><th class="num">LLM calls between steps</th><th class="num">Tokens between steps</th><th class="num">Cost between steps</th><th class="num">Total cost</th></tr></thead><tbody></tbody></table>
-    <p class="lede">Repeated calls: the same operation with the identical input. If every repeat gave the same output, each repeat after the first was redundant (a cache candidate).</p>
-    <table id="callTable"><thead><tr><th>Operation</th><th>Input</th><th>User input</th><th class="num">Seen</th><th>Output</th><th class="num">Redundant</th></tr></thead><tbody></tbody></table>
-
-    <h2><span class="idx">04</span>Score</h2>
+    <details class="advanced">
+    <summary>Per-node score and recommendation <span class="k">— every node, worst first</span></summary>
+    <p class="lede"><b>Score</b> ranks nodes by cost and how unpredictable they are (0 = cheap and consistent, 1 = the costliest and inconsistent).</p>
     <p class="lede" id="scoreFormula"></p>
 
-    <h2><span class="idx">05</span>Recommend</h2>
-    <p class="lede">Worst-scoring actions first.</p>
     <div id="recContainer"></div>
+    </details>
 
     <div id="validationSection" style="display:none">
-      <h2><span class="idx">06</span>Validate <span style="font-size:12px;color:var(--faint)">— expected vs. actual, against synthetic ground truth</span></h2>
+      <h2><span class="idx">05</span>Validate <span style="font-size:12px;color:var(--faint)">— expected vs. actual, against synthetic ground truth</span></h2>
       <p class="lede">Only available for generated data, where each node's true determinism is actually known — compares the classifier's prediction against that known answer instead of just trusting its own output.</p>
       <div class="stats" id="validationStats"></div>
       <table id="validationTable"><thead><tr><th>Node</th><th class="num">True determinism_rate</th><th>Expected</th><th>Predicted</th><th>Outcome</th></tr></thead><tbody></tbody></table>
@@ -906,6 +958,9 @@ function render(data) {
   reportEl.style.display = 'block';
   reportEl.dataset.hasRun = '1';
 
+  // Summary
+  renderSummary(data);
+
   // Observe
   const ob = data.observe;
   document.getElementById('observeStats').innerHTML =
@@ -1003,19 +1058,9 @@ function render(data) {
       </div>
       <div class="agent-body">
         <table>
-          <thead><tr><th>Node (action)</th><th>Determinism</th><th class="num">Occurrences</th><th class="num">Avg cost</th><th class="num">Avg latency (ms)</th><th class="num">Score</th></tr></thead>
-          <tbody>
-            ${info.actions.map(a => `
-              <tr class="node-row" title="Show this node's actions by starting point">
-                <td>${esc(a.node)}</td>
-                <td><span class="pill ${classificationPillClass(a.classification)}">${classificationLabel(a.classification)}</span></td>
-                <td class="num">${a.occurrences}</td>
-                <td class="num">$${a.avg_cost.toFixed(4)}</td>
-                <td class="num">${a.avg_latency_ms.toFixed(0)}</td>
-                <td class="num ${a.score >= 0.5 ? 'warn' : ''}">${a.score.toFixed(3)}</td>
-              </tr>
-              <tr class="node-detail" hidden><td colspan="6">${a.fingerprints ? nodeFingerprintView(a.fingerprints) : ''}<details class="classifier-inputs"><summary>Inputs used by the determinism classifier</summary>${nodeInputsTable(a.evidence)}</details></td></tr>`).join('')}
-          </tbody>
+          <thead><tr><th>Node (operation)</th><th>Determinism</th><th class="num">Seen</th><th class="num">Cost <span class="term" title="Own cost plus the LLM call that decided to run it">incl. deciding</span></th><th class="num">Avg latency (ms)</th><th class="num"><span class="term" title="0 = cheap and consistent, 1 = the costliest and inconsistent">Score</span></th></tr></thead>
+          <tbody>${info.actions.filter(a => a.occurrences >= MIN_SHOWN_OCCURRENCES).map(nodeRows).join('')}</tbody>
+          ${rareNodesBody(info.actions.filter(a => a.occurrences < MIN_SHOWN_OCCURRENCES))}
         </table>
       </div>
     </div>`).join('');
@@ -1024,6 +1069,12 @@ function render(data) {
     row.classList.toggle('open');
     row.nextElementSibling.hidden = !row.classList.contains('open');
   }));
+  agentsEl.querySelectorAll('tr.rare-toggle').forEach(row => row.addEventListener('click', () => {
+    const rows = row.closest('table').querySelector('tbody.rare');
+    rows.hidden = !rows.hidden;
+    row.firstElementChild.textContent = row.firstElementChild.textContent.replace(/^(Show|Hide)/, rows.hidden ? 'Show' : 'Hide');
+  }));
+  document.getElementById('mineTakeaway').innerHTML = mineTakeaway(byAgent);
 
   // Repetition
   const rep = data.repetition || { sequences: [], calls: [] };
@@ -1047,9 +1098,11 @@ function render(data) {
       <td class="inp">${inputText(c.input) || '<span class="k">(empty input)</span>'}</td>
       <td class="inp">${(c.user_inputs || []).map(esc).join('\n<hr class="tsep">') || '<span class="k">—</span>'}</td>
       <td class="num">${c.count}</td>
-      <td>${c.same_output ? '<span class="pill det">same every time</span>' : `<span class="pill nondet">${c.distinct_outputs} different</span>`}</td>
+      <td>${c.same_output ? '<span class="pill det">same every time</span>' : `<span class="pill nondet">${c.distinct_outputs} different results</span>`}</td>
       <td class="num">${c.redundant_calls}</td>
     </tr>`).join('') : '<tr><td colspan="6">No call repeated with an identical input.</td></tr>';
+  document.getElementById('seqTakeaway').innerHTML = seqTakeaway(rep.sequences);
+  document.getElementById('callTakeaway').innerHTML = callTakeaway(rep.calls);
   document.querySelectorAll('#seqTable tr.node-row').forEach(row => row.addEventListener('click', () => {
     row.classList.toggle('open');
     row.nextElementSibling.hidden = !row.classList.contains('open');
@@ -1063,7 +1116,7 @@ function render(data) {
   const recEl = document.getElementById('recContainer');
   recEl.innerHTML = data.recommend.map(r => `
     <div class="rec">
-      <div class="score ${r.score >= 0.5 ? 'warn' : 'good'}">${r.score.toFixed(2)}</div>
+      <div class="score ${r.score >= 0.5 ? 'warn' : 'good'}" title="score: 0 = cheap and consistent, 1 = the costliest and inconsistent">${r.score.toFixed(2)}</div>
       <div class="msg">${esc(r.message)}
         <div class="derivation">${esc(r.derivation)}</div>
       </div>
@@ -1124,11 +1177,40 @@ function classificationPillClass(classification) {
   return 'insuff';
 }
 
-function outcomeLabel(o) {
-  if (o.selected) return o.result && o.result !== 'tool_use' ? `${o.selected} · ${o.result}` : o.selected;
-  const r = o.result || '—';
+// Outputs arrive as "<selected>/<result>" (fingerprints) or {selected, result}
+// (classifier); tool results are "success:<hash>" / "error:<hash>". Hashes mean
+// nothing to a reader, so distinct ones are lettered A, B, ... per row.
+function outputLetters() {
+  const seen = new Map();
+  return hash => {
+    if (!seen.has(hash)) seen.set(hash, String.fromCharCode(65 + Math.min(seen.size, 25)));
+    return seen.get(hash);
+  };
+}
+
+function readableOutput(selected, result, letter) {
+  const parts = [];
+  if (selected && selected !== '-') parts.push(selected === 'respond' ? 'answered the user' : `chose ${esc(selected)}`);
+  const r = result && result !== '-' ? result : '';
   const m = r.match(/^(success|error):([0-9a-f]+)$/);
-  return m ? `${m[1]} · output ${m[2].slice(0, 6)}` : r;
+  // Without a letter function there's nothing to compare against, so just say success/error.
+  const tag = h => letter ? ` ${letter(h)}` : '';
+  if (m) parts.push(m[1] === 'error' ? `<span class="bad">error${tag(m[2])}</span>` : (letter ? `result${tag(m[2])}` : 'success'));
+  else if (r && r !== 'tool_use' && r !== 'end_turn') parts.push(esc(r));
+  return parts.join(' · ') || '—';
+}
+
+function splitOutputLabel(label) {
+  const i = label.indexOf('/');
+  return i < 0 ? [null, label] : [label.slice(0, i), label.slice(i + 1)];
+}
+
+function outputPills(outputs, letter) {
+  return outputs.map(o => `<span class="oc" title="${esc(o.output)}"><b>${readableOutput(...splitOutputLabel(o.output), letter)}</b> ×${o.count}</span>`).join('');
+}
+
+function outcomeLabel(o, letter) {
+  return readableOutput(o.selected, o.result, letter);
 }
 
 function verdictLabel(v) {
@@ -1141,13 +1223,13 @@ const pct = x => x == null ? '—' : `${Math.round(x * 100)}%`;
 
 function nodeFingerprintView(fp) {
   const lv = fp.levels;
-  const level = (name, l) => `<b>${name}</b> ${pct(l.agreement)} <span class="k">(${l.repeated_groups}/${l.groups} fingerprints repeated)</span>`;
+  const level = (name, plain, l) => `<span class="term" title="${plain}"><b>${name}</b></span> ${pct(l.agreement)} <span class="k">(${l.repeated_groups} of ${l.groups} requests seen more than once)</span>`;
   const triggers = fp.triggers.map(t => `<tr>
       <td>${esc(t.trigger)}</td>
       <td class="num">${t.observations}</td>
       <td class="num">${t.distinct_inputs}</td>
-      <td>${esc(t.dominant_output)} <span class="k">${t.dominant_output_count}/${t.observations}</span></td>
-      <td class="num">${pct(t.dominant_output_rate)}</td>
+      <td>${readableOutput(...splitOutputLabel(t.dominant_output), null)}</td>
+      <td class="num">${pct(t.dominant_output_rate)} <span class="k">(${t.dominant_output_count} of ${t.observations})</span></td>
     </tr>`).join('');
   const shown = fp.groups.length < fp.num_groups ? `top ${fp.groups.length} of ${fp.num_groups}` : `all ${fp.num_groups}`;
   const groups = fp.groups.map(g => {
@@ -1163,15 +1245,16 @@ function nodeFingerprintView(fp) {
       <td>${esc(g.trigger)}</td>
       <td class="inp">${inp}</td>
       <td class="num">${g.observations}<span class="k"> · ${g.sessions} sess</span></td>
-      <td>${verdictLabel(g.verdict)}${g.outputs.map(o => `<span class="oc"><b>${esc(o.output)}</b> ×${o.count}</span>`).join('')}</td>
+      <td>${verdictLabel(g.verdict)}${outputPills(g.outputs, outputLetters())}</td>
       <td class="num">${pct(g.dominant_output_rate)}</td>
       <td class="inp">${split}</td>
       <td class="inp">${users || '<span class="k">—</span>'}</td>
     </tr>`;
   }).join('');
-  return `<p class="lede fp-summary">Agreement by fingerprint level: ${level('business', lv.business)} → ${level('context', lv.context)} → ${level('execution', lv.execution)}<br>${esc(fp.variance.explanation)}</p>
-  <table><thead><tr><th>Starting point (trigger)</th><th class="num">Seen</th><th class="num">Distinct inputs</th><th>Dominant output</th><th class="num">Dominant rate</th></tr></thead><tbody>${triggers}</tbody></table>
-  <table><thead><tr><th>Starting point</th><th>Input (business fingerprint, ${shown}, differing first)</th><th class="num">Seen</th><th>Verdict · outputs</th><th class="num">Dominant rate</th><th>Splits at deeper levels</th><th>User input (examples)</th></tr></thead><tbody>${groups}</tbody></table>
+  return `<p class="lede fp-summary">Agreement by fingerprint level: ${level('business', 'same node, starting point and input', lv.business)} → ${level('context', '+ same result from the triggering step', lv.context)} → ${level('execution', '+ same model and agent version', lv.execution)}<br>
+  <span class="k">In plain words: when the same request came back, how often it got its most common answer. If agreement rises at a deeper level, that extra detail explains the difference.</span><br>${esc(fp.variance.explanation)}</p>
+  <table><thead><tr><th>Starting point (trigger) <span class="term" title="What the action reacted to: the user's prompt or the previous step's result">?</span></th><th class="num">Seen</th><th class="num">Distinct inputs</th><th>Dominant output <span class="term" title="The most common answer after this starting point">?</span></th><th class="num">Dominant rate</th></tr></thead><tbody>${triggers}</tbody></table>
+  <table><thead><tr><th>Starting point</th><th>Input (business fingerprint = same request, ${shown}, differing first)</th><th class="num">Seen</th><th>Verdict · outputs <span class="term" title="Same letter = identical output">?</span></th><th class="num">Dominant rate</th><th>Splits at deeper levels</th><th>User input (examples)</th></tr></thead><tbody>${groups}</tbody></table>
   <p class="lede fp-meta">Fingerprint schema v${fp.schema_version}. Identity: ${esc(fp.fields.execution.join(', '))}. Excluded from identity: ${esc(fp.excluded_from_identity.join(', '))}.</p>`;
 }
 
@@ -1196,10 +1279,95 @@ function nodeInputsTable(ev) {
         <td class="inp">${inp}</td>
         <td class="inp">${userInputsText(i.user_inputs || [], i.distinct_user_inputs || 0)}</td>
         <td class="num">${i.count}</td>
-        <td>${verdictLabel(i.verdict)}${i.outcomes.map(o => `<span class="oc"><b>${esc(outcomeLabel(o))}</b> ×${o.count}</span>`).join('')}</td>
+        <td>${verdictLabel(i.verdict)}${(letter => i.outcomes.map(o => `<span class="oc"><b>${outcomeLabel(o, letter)}</b> ×${o.count}</span>`).join(''))(outputLetters())}</td>
       </tr>`;
     }).join('')}</tbody>
   </table>`;
+}
+
+const CLASSIFICATION_HELP = {
+  DETERMINISTIC: 'The same input always gave the same result, seen often enough to trust it',
+  NON_DETERMINISTIC: 'The same input gave different results at least once',
+  INSUFFICIENT_EVIDENCE: "The same input wasn't repeated enough times to judge",
+};
+const MIN_SHOWN_OCCURRENCES = 3;
+const money = x => x >= 0.1 ? `$${x.toFixed(2)}` : `$${x.toFixed(3)}`;
+
+function nodeRows(a) {
+  const deciding = a.decision_cost > 0 ? `<span class="sub-cost">${money(a.decision_cost)} deciding</span>` : '';
+  return `
+    <tr class="node-row" title="Show what started this node's actions and how consistent they were">
+      <td>${esc(a.node)}</td>
+      <td><span class="pill ${classificationPillClass(a.classification)}" title="${CLASSIFICATION_HELP[a.classification] || ''}">${classificationLabel(a.classification)}</span></td>
+      <td class="num">${a.occurrences}</td>
+      <td class="num">${money(a.total_cost)}${deciding}</td>
+      <td class="num">${a.avg_latency_ms.toFixed(0)}</td>
+      <td class="num ${a.score >= 0.5 ? 'warn' : ''}">${a.score.toFixed(3)}</td>
+    </tr>
+    <tr class="node-detail" hidden><td colspan="6">${a.fingerprints ? nodeFingerprintView(a.fingerprints) : ''}<details class="classifier-inputs"><summary>Inputs used by the determinism classifier</summary>${nodeInputsTable(a.evidence)}</details></td></tr>`;
+}
+
+function rareNodesBody(rare) {
+  if (!rare.length) return '';
+  const cost = rare.reduce((t, a) => t + a.total_cost, 0);
+  return `<tbody><tr class="rare-toggle"><td colspan="6">Show ${rare.length} nodes seen fewer than ${MIN_SHOWN_OCCURRENCES} times (${money(cost)} in total)</td></tr></tbody>
+    <tbody class="rare" hidden>${rare.map(nodeRows).join('')}</tbody>`;
+}
+
+function renderSummary(data) {
+  const sm = data.summary;
+  const t = sm.totals;
+  document.getElementById('summaryStats').innerHTML =
+    statCard(money(t.cost), 'total cost') +
+    statCard(t.llm_calls.toLocaleString(), 'LLM calls') +
+    statCard(t.tool_calls.toLocaleString(), 'tool calls') +
+    statCard(t.tokens.toLocaleString(), 'tokens') +
+    statCard(t.runs.toLocaleString(), 'runs');
+  const opps = sm.opportunities;
+  const top = opps.find(o => o.saving);
+  document.getElementById('summaryTakeaway').innerHTML = !opps.length
+    ? 'Nothing repeated often enough to suggest a change yet.'
+    : `${sm.num_opportunities} opportunities found, showing the top ${opps.length} (at most 5 of each type)` + (top ? `. The largest: <b>${esc(top.title)}</b>, ${money(top.saving)} of observed cost.` : '.');
+  const input = inp => inp && Object.keys(inp).length
+    ? `<div class="inp">${Object.entries(inp).map(([k, v]) => `<span class="k">${esc(k)}:</span> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}`).join('\n')}</div>` : '';
+  // One header per optimization type (in order of its best saving), then its rows.
+  const types = [...new Set(opps.map(o => o.type))];
+  const row = o => `
+    <tr>
+      <td>${esc(o.title)}${input(o.input)}</td>
+      <td>${esc(o.evidence)}</td>
+      <td class="num">${o.saving == null ? '<span class="k">—</span>' : money(o.saving)}</td>
+      <td>${esc(o.action)}</td>
+    </tr>`;
+  document.querySelector('#oppTable tbody').innerHTML = opps.length ? types.map(type => `
+    <tr class="opt-head"><td colspan="4"><span class="opt-type">${esc(type)}</span> <span class="opt-desc">${esc(sm.optimization_types[type] || '')}</span></td></tr>
+    ${opps.filter(o => o.type === type).map(row).join('')}`).join('') : '<tr><td colspan="4">No opportunities yet.</td></tr>';
+  document.getElementById('oppNotes').textContent = sm.notes;
+}
+
+function seqTakeaway(seqs) {
+  if (!seqs.length) return '';
+  const top = seqs[0];
+  return `Most expensive repeat: <b>${esc(top.steps.join(' → '))}</b>, ${top.occurrences}× in ${top.runs} runs, ` +
+    `with ${top.llm_calls_between_steps} LLM calls (${money(top.cost_between_steps)}) spent only on picking the next step.`;
+}
+
+function callTakeaway(calls) {
+  if (!calls.length) return '';
+  const same = calls.filter(c => c.same_output);
+  const redundant = same.reduce((t, c) => t + c.redundant_calls, 0);
+  return `${calls.length} operations ran more than once with the identical input; ` +
+    `<b>${same.length}</b> gave the same output every time (${redundant} redundant repeats, cache candidates).`;
+}
+
+function mineTakeaway(byAgent) {
+  const actions = Object.values(byAgent).flatMap(i => i.actions);
+  if (!actions.length) return '';
+  const rare = actions.filter(a => a.occurrences < MIN_SHOWN_OCCURRENCES).length;
+  const top = [...actions].sort((a, b) => b.total_cost - a.total_cost)[0];
+  return `Costliest node: <b>${esc(top.node)}</b> (${money(top.total_cost)}). ` +
+    `${actions.length} nodes, ${rare} of them seen fewer than ${MIN_SHOWN_OCCURRENCES} times (hidden below).` +
+    (actions.some(a => a.decision_cost > 0) ? ' A tool\'s cost includes the LLM call that chose it, which also appears on its own llm_call row, so the column doesn\'t add up to the total.' : '');
 }
 
 function classificationLabel(classification) {

@@ -71,3 +71,39 @@ def test_sequences_are_found_in_traces_without_routing_markers():
     assert top["steps"] == ["classify", "lookup", "reply"]
     assert top["llm_calls_between_steps"] == 0
     assert abs(top["sequence_cost"] - 0.09) < 1e-9
+
+
+def test_decision_cost_is_split_across_the_steps_one_call_chose():
+    from profiler.patterns import decision_costs
+
+    a, b = _tool("r1", "Read", file_path="a.py"), _tool("r1", "Read", file_path="b.py")
+    events = [_router("r1", cost=0.4), a, b]
+    shares = decision_costs(events)
+    assert shares[id(a)] == shares[id(b)] == 0.2
+
+
+def test_a_call_that_answered_the_user_is_not_charged_to_the_next_step():
+    from profiler.patterns import decision_costs
+
+    answer = TraceEvent.model_validate(
+        {**_router("r1", cost=0.5).model_dump(), "decision": {"type": "next_action", "selected": "respond"}}
+    )
+    step = _tool("r1", "Read", file_path="a.py")
+    assert decision_costs([answer, step]).get(id(step), 0.0) == 0.0
+    assert repeated_sequences([e for _ in range(3) for e in (answer, step, _router("r1"), step)])[0]["cost_between_steps"] > 0
+
+
+def test_summary_ranks_opportunities_and_prices_cache_with_deciding_cost():
+    from profiler.mine import mine
+    from profiler.opportunities import build_summary
+
+    events = [e for run in ("r1", "r2", "r3") for e in _git_flow(run)]
+    events += [e for i in range(3) for e in (_router(f"c{i}", cost=0.3), _tool(f"c{i}", "Read", result="success:same", file_path="a.py"))]
+    summary = build_summary(events, "wf", find_repetition(events, "wf"), mine(events, "wf"))
+    types = {o["type"] for o in summary["opportunities"]}
+    assert {"EXTRACT_DETERMINISTIC_SUBSTEP", "CACHE_RESULT"} <= types
+    cache = next(o for o in summary["opportunities"] if o["type"] == "CACHE_RESULT")
+    assert abs(cache["saving"] - 0.6) < 1e-9  # two repeats × the 0.3 routing call that chose each
+    savings = [o["saving"] for o in summary["opportunities"] if o["saving"] is not None]
+    assert savings == sorted(savings, reverse=True)
+    assert summary["totals"]["tool_calls"] == 12

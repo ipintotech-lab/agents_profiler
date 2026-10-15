@@ -69,7 +69,14 @@ controls — those remain out of scope per the design doc above.
   model and agent version), with output distributions, dominant-output
   rates and a variance explanation. It's evidence alongside the
   classifier, not a change to it. `patterns.py` mines repeated step
-  sequences and repeated identical calls.
+  sequences and repeated identical calls, and charges each step for the
+  LLM call that chose it (`decision_costs`). `opportunities.py` builds the
+  report's `summary`: totals plus ranked savings opportunities
+  (`EXTRACT_DETERMINISTIC_SUBSTEP`, `CACHE_RESULT`,
+  `CONDITIONAL_LLM_BYPASS`, `REVIEW_HIDDEN_STATE`), each with its evidence
+  and the observed cost it would remove. The dashboard leads with that
+  summary, then repetition, then nodes (costliest first); capacity planning
+  and the per-node score list are folded under "advanced".
 - `src/rawdata_gen/` — synthetic trace-data generator vendored from
   [`agents_profile_rawdata_gen`](https://github.com/ipintotech-lab/agents_profile_rawdata_gen)
   (copied source, not a dependency, since that repo has no packaging

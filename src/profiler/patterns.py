@@ -50,11 +50,20 @@ def _is_router_call(event: TraceEvent) -> bool:
     return event.decision is not None and event.decision.type == _ROUTER_DECISION_TYPE
 
 
+def _chose_no_step(event: TraceEvent) -> bool:
+    # A routing call that answered the user instead of picking a step; the
+    # next step comes from a later prompt, so this call isn't its cost.
+    return event.decision is not None and event.decision.selected == "respond"
+
+
 def _steps_by_run(events: list[TraceEvent]) -> dict[str, list[_Step]]:
     runs: dict[str, list[_Step]] = defaultdict(list)
     pending: dict[str, _Step] = {}
     for e in events:
         if _is_router_call(e):
+            if _chose_no_step(e):
+                pending.pop(e.run_id, None)
+                continue
             glue = pending.setdefault(e.run_id, _Step(event=e))
             glue.glue_cost += e.cost
             glue.glue_tokens += e.tokens.input + e.tokens.output
@@ -66,6 +75,31 @@ def _steps_by_run(events: list[TraceEvent]) -> dict[str, list[_Step]]:
             step.glue_cost, step.glue_tokens, step.glue_calls = glue.glue_cost, glue.glue_tokens, glue.glue_calls
         runs[e.run_id].append(step)
     return runs
+
+
+def decision_costs(events: list[TraceEvent]) -> dict[int, float]:
+    """Cost of the LLM call that chose each step, keyed by ``id(event)``.
+    A routing call that picked several steps at once is split evenly across
+    them, so the shares add up to the routing cost. Steps with no routing
+    call before them (any trace format that doesn't mark routing) get 0."""
+    shares: dict[int, float] = {}
+    batches: dict[str, tuple[float, list[TraceEvent]]] = {}
+
+    def settle(run_id: str) -> None:
+        cost, steps = batches.pop(run_id, (0.0, []))
+        for step in steps:
+            shares[id(step)] = cost / len(steps)
+
+    for e in events:
+        if _is_router_call(e):
+            settle(e.run_id)
+            if not _chose_no_step(e):
+                batches[e.run_id] = (e.cost, [])
+        elif e.run_id in batches:
+            batches[e.run_id][1].append(e)
+    for run_id in list(batches):
+        settle(run_id)
+    return shares
 
 
 def _step_summary(step: _Step) -> dict:
@@ -157,6 +191,7 @@ def repeated_sequences(events: list[TraceEvent]) -> list[dict]:
 
 
 def repeated_calls(events: list[TraceEvent]) -> list[dict]:
+    shares = decision_costs(events)
     groups: dict[tuple[str, str], list[TraceEvent]] = defaultdict(list)
     for e in events:
         if _is_router_call(e):
@@ -179,6 +214,8 @@ def repeated_calls(events: list[TraceEvent]) -> list[dict]:
                 "same_output": same_output,
                 "redundant_calls": len(group) - 1 if same_output else 0,
                 "cost": sum(e.cost for e in group),
+                # Including the LLM calls that chose to run it.
+                "cost_with_decision": sum(e.cost + shares.get(id(e), 0.0) for e in group),
                 "user_inputs": [
                     _display_value(t)
                     for t in dict.fromkeys(e.user_input for e in group if e.user_input is not None)

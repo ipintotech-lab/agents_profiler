@@ -7,6 +7,8 @@ are implemented in ``mine.py``.
 """
 from __future__ import annotations
 
+from collections import defaultdict
+
 from bpop import BPOP
 from bpop.result import BPOPResult
 from ingest import (
@@ -21,7 +23,8 @@ from ingest.trace_schema import TraceEvent
 from .calibration import calibrate_determinism_thresholds
 from .determinism import Classification
 from .mine import mine, observe, recommend, score
-from .patterns import find_repetition
+from .opportunities import build_summary
+from .patterns import decision_costs, find_repetition
 from .validation import validate
 
 
@@ -102,6 +105,15 @@ def run_pipeline(
     scored = score(mined)
     recommendations = recommend(scored)
 
+    # Charge each step for the LLM call that chose it, so a tool's cost
+    # isn't shown as $0 when an LLM call was spent deciding to run it.
+    relevant = [e for e in events if e.workflow == selected_workflow]
+    shares = decision_costs(relevant)
+    decision_cost: dict[tuple[str, str], float] = defaultdict(float)
+    for e in relevant:
+        decision_cost[(e.agent, e.node)] += shares.get(id(e), 0.0)
+    repetition = find_repetition(events, selected_workflow)
+
     agents_summary = {}
     predictions: dict[str, Classification] = {}
     for s in scored:
@@ -131,6 +143,8 @@ def run_pipeline(
                 "evidence": s.evidence.to_dict(),
                 "distinct_outcomes": s.distinct_outcomes,
                 "avg_cost": s.avg_cost,
+                "decision_cost": decision_cost[(s.agent, s.node)],
+                "total_cost": s.avg_cost * s.occurrences + decision_cost[(s.agent, s.node)],
                 "avg_latency_ms": s.avg_latency_ms,
                 "cost_component": round(s.cost_component, 4),
                 "score": round(s.score, 4),
@@ -156,7 +170,11 @@ def run_pipeline(
         "This is workflow-level context for the recommendations below, not an input to any node's score."
     )
 
+    for bucket in agents_summary.values():
+        bucket["actions"].sort(key=lambda a: -a["total_cost"])
+
     report = {
+        "summary": build_summary(events, selected_workflow, repetition, scored),
         "observe": {**observed, "selected_workflow": selected_workflow},
         "formula": {"used": formula_used, "defaults": formula_defaults, "per_workflow": formula_by_workflow},
         "profile": {**_serialize_bpop_result(bpop_result), "sensitivity": sensitivity},
@@ -171,7 +189,7 @@ def run_pipeline(
             ),
         },
         "recommend": recommendations,
-        "repetition": find_repetition(events, selected_workflow),
+        "repetition": repetition,
         "capacity_context": bpop_capacity_context,
     }
 
