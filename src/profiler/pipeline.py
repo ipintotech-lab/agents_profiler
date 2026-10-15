@@ -23,6 +23,7 @@ from ingest.trace_schema import TraceEvent
 from .calibration import calibrate_determinism_thresholds
 from .data_quality import check_data_quality, estimate_missing_costs
 from .determinism import Classification
+from .expected import compare_workflow, has_expected, summarize
 from .mine import mine, observe, recommend, score
 from .opportunities import build_summary
 from .patterns import decision_costs, find_repetition
@@ -205,6 +206,15 @@ def run_pipeline(
         "repetition": repetition,
         "capacity_context": bpop_capacity_context,
     }
+
+    if has_expected(selected_workflow):
+        # data from one of the mock agents: show what it was built to contain
+        compared = compare_workflow(events, selected_workflow, ground_truth, stats=mined, repetition=repetition)
+        report["expected_vs_found"] = {
+            **compared,
+            "workflow": selected_workflow,
+            "summary": summarize(compared["rows"], compared["unplanned"], compared["determinism"]),
+        }
 
     if ground_truth:
         report["validation"] = validate(predictions, ground_truth).to_dict()

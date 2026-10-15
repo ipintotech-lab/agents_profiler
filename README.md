@@ -191,6 +191,18 @@ should surface, and a trap it should not:
 The full list, with the reason for each, is `EXPECTED_FINDINGS` in
 `src/rawdata_gen/ground_truth.py`.
 
+Each generated run also records the request that started it (`user_input`,
+e.g. "Remediate CVE-2026-4867"), as real traces do.
+
+When the analyzed workflow is one of these agents, the report adds
+**05 Expected vs. found** (`report["expected_vs_found"]`): each planted
+finding and trap next to what section 01 listed, findings nobody planted,
+and, when ground truth is sent, per-node determinism. **06 Validate**
+then grades each "same answer every time" call against the known answer.
+"Not judged: too few repeats" there is not an error: a step is only called
+after the same input repeats, so small data (a few hundred lines) leaves most
+steps unjudged. The dashboard defaults to 2,000 lines.
+
 ### POC: expected vs. found
 
 The dashboard's POC tab (`POST /poc/run`) checks how much data the profiler
@@ -202,6 +214,20 @@ and per-node determinism expected vs. classified, at each sample size.
 Synthetic agents are simpler than real ones, so a full match doesn't prove
 the profiler is right on real traces, but each miss or false alarm is a
 concrete case to look at.
+
+The comparison lives in `src/profiler/expected.py`, shared by the POC and the
+report. `GET /poc/expected` lists what each agent was built to contain; the
+POC tab shows it in its guide before you run anything. Results follow the
+report's numbered layout: 01 Summary, 02 Expected vs. found, 03 Calibration,
+04 Sample size, 05 Stability, 06 Capacity, 07 Savings.
+
+### Run tests
+
+The "Run tests" tab (`POST /run_sweep`) is a health check of the pipeline:
+24 settings, one change at a time from a baseline (agent count, variance,
+demand model, 1,000–10,000 lines, capacity overrides). Each case reports
+pass/fail, time, and how many of the analyzed agent's planted findings the
+report found (`planted_found` / `planted_total` / `false_alarms`).
 
 ### When the data is incomplete
 

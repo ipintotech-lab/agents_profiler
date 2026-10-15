@@ -28,7 +28,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
     error = rng.choice(ERRORS)
     job_run = f"jr-{rng.randint(0, 999999):06d}"
     run_id = f"etl-{rng.randint(0, 999999):06d}"
-    run = Run("etl-incident-response", "data-pipeline-agent", run_id, "v1.0")
+    run = Run("etl-incident-response", "data-pipeline-agent", run_id, "v1.0", user_input=f"Job {job} failed ({error}) on table {table}, run {job_run}: fix it")
     parent = run.run_id
 
     def schema() -> None:

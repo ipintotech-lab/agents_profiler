@@ -32,7 +32,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
     industry, size, region = profile.choice(INDUSTRIES), profile.choice(SIZES), profile.choice(REGIONS)
     lead = f"lead-{rng.randint(0, 999999):06d}"
     run_id = f"leads-{rng.randint(0, 999999):06d}"
-    run = Run("lead-qualification", "sales-agent", run_id, "v1.0")
+    run = Run("lead-qualification", "sales-agent", run_id, "v1.0", user_input=f"Qualify inbound lead {lead} from {domain}")
     parent = run.run_id
     tier = {"smb": "C", "mid_market": "B", "enterprise": "A"}[size]
 

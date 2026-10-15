@@ -283,3 +283,12 @@ def test_all_six_agents_generate_their_planned_nodes():
         for f in findings:
             for node in f.get("steps", [f.get("node")]):
                 assert node in nodes[workflow], (workflow, node)
+
+
+def test_every_generated_event_carries_the_request_that_started_its_run():
+    from rawdata_gen.generate_traces import AGENT_GENERATORS
+
+    for gen in AGENT_GENERATORS:
+        for run in gen(random.Random(7)):
+            requests = {e.get("user_input") for e in run.events}
+            assert len(requests) == 1 and None not in requests, (run.workflow, requests)

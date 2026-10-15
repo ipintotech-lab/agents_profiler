@@ -34,8 +34,10 @@ def jittered_int(rng: random.Random, low: int, high: int, variance: str, floor: 
 
 
 class Run:
-    def __init__(self, workflow: str, agent: str, run_id: str, version: str):
+    def __init__(self, workflow: str, agent: str, run_id: str, version: str, user_input: str | None = None):
         self.workflow = workflow
+        # the request that started the run, as a real trace records it
+        self.user_input = user_input
         self.agent = agent
         self.run_id = run_id
         self.trace_id = f"trace-{run_id}"
@@ -72,6 +74,8 @@ class Run:
             "result": result,
             "workflow_version": self.version,
         }
+        if self.user_input:
+            event["user_input"] = self.user_input
         if parent:
             event["parent"] = parent
         if decision:

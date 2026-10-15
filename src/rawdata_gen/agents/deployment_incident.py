@@ -16,7 +16,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
     error_rate = rng.choice(ERROR_RATES)
     rollback_allowed = rng.random() < 0.5
     run_id = f"deploy-{rng.randint(0, 999999):06d}"
-    run = Run("deployment-incident-response", "release-agent", run_id, "v1.0")
+    run = Run("deployment-incident-response", "release-agent", run_id, "v1.0", user_input=f"Investigate {deployment}: error rate {error_rate}")
     parent = run.run_id
     state = {"deployment_id": deployment, "error_rate": error_rate}
     run.action(

@@ -25,7 +25,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
     lint_ok = rng.random() < 0.7
     tests_ok = rng.random() < 0.8
     run_id = f"review-{rng.randint(0, 999999):06d}"
-    run = Run("pull-request-review", "code-review-agent", run_id, "v1.0")
+    run = Run("pull-request-review", "code-review-agent", run_id, "v1.0", user_input=f"Review PR #{pr} in {repo}")
     parent = run.run_id
 
     def plan(after: str, step: str) -> None:

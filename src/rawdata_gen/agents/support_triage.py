@@ -17,7 +17,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
     category = rng.choice(CATEGORIES)
     urgency = rng.choice(URGENCIES)
     run_id = f"support-{rng.randint(0, 999999):06d}"
-    run = Run("support-ticket-triage", "support-agent", run_id, "v1.0")
+    run = Run("support-ticket-triage", "support-agent", run_id, "v1.0", user_input=f"Triage support ticket {ticket}")
     parent = run.run_id
     classification = apply_noise(rng, "classify_ticket", category, CATEGORIES)
     run.action(

@@ -122,6 +122,7 @@ def run_sweep(seed: int = 1) -> dict:
             )
             elapsed_ms = (time.monotonic() - started) * 1000
             validation = report.get("validation")
+            expected = (report.get("expected_vs_found") or {}).get("summary")
             row.update(
                 {
                     "passed": True,
@@ -135,6 +136,10 @@ def run_sweep(seed: int = 1) -> dict:
                     "false_negatives": validation["false_negatives"] if validation else None,
                     "false_positives": validation["false_positives"] if validation else None,
                     "accuracy": validation["accuracy"] if validation else None,
+                    "insufficient_rate": validation["insufficient_evidence_rate"] if validation else None,
+                    "planted_found": expected["planted_found"] if expected else None,
+                    "planted_total": expected["planted_total"] if expected else None,
+                    "false_alarms": expected["false_alarms"] if expected else None,
                 }
             )
         except Exception as exc:  # noqa: BLE001 -- a sweep must survive and report every case's own failure
@@ -152,6 +157,10 @@ def run_sweep(seed: int = 1) -> dict:
                     "false_negatives": None,
                     "false_positives": None,
                     "accuracy": None,
+                    "insufficient_rate": None,
+                    "planted_found": None,
+                    "planted_total": None,
+                    "false_alarms": None,
                 }
             )
         results.append(row)

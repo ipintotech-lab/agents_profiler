@@ -156,6 +156,10 @@
   details.hf-guide a { color: var(--lime); }
   details.hf-guide .hf-cli { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
   details.hf-guide .hf-cli pre.code { margin: 6px 0; white-space: pre-wrap; word-break: break-all; }
+  details.tab-guide ul { margin: 6px 0 8px; padding-left: 20px; line-height: 1.6; }
+  details.tab-guide p { margin: 8px 0 0; }
+  details.poc-guide ul { margin: 6px 0 8px; padding-left: 20px; line-height: 1.6; }
+  details.poc-guide table { margin-top: 6px; }
   details.hf-guide li.flag { outline: 1px solid var(--lime); outline-offset: 3px; border-radius: 2px; }
   .hf-examples { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 4px; }
   .hf-examples button { padding: 2px 10px; font-size: 12px; }
@@ -201,6 +205,25 @@
   </div>
 
   <form class="controls" id="form" style="border-top-left-radius:0">
+    <div id="uploadGuideWrap">
+      <details class="hf-guide tab-guide" id="uploadGuide" open>
+        <summary>What this tab does, and what to expect</summary>
+        <p>Upload traces your own agent produced and the app looks for <b>work it repeats</b>: the same call with the same input, the same chain of steps, LLM calls that only pick the next step. Each one is a place to save tokens.</p>
+        <ol>
+          <li><b>Choose one or more files</b> &mdash; JSON or JSON Lines: agent trace events, Claude Code session files (<code>~/.claude/projects/…/*.jsonl</code>), or common trace exports. The format is detected for you.</li>
+          <li><b>Pick a workflow</b> &mdash; the report covers one at a time; by default the one with the most events.</li>
+          <li><b>Click "Run pipeline"</b> at the bottom.</li>
+        </ol>
+        <p><b>What to expect</b>: findings need repeats, so a few runs usually show little. A trace missing tokens, cost or timing still works, and a note at the top of the report says what's missing and what that changes.</p>
+        <p style="margin-top:10px"><b>What the report shows</b> (after "Run pipeline"):</p>
+        <ul>
+          <li><b>01 Summary</b> &mdash; where the money goes and what to change: each repeat worth fixing, the evidence, the observed saving and the fix (cache it, use a rule, script the steps).</li>
+          <li><b>02 Repetition</b> &mdash; the same steps in the same order across runs, and the same call with the same input.</li>
+          <li><b>03 Nodes</b> &mdash; every distinct operation, costliest first, and whether the same input ever gave a different result.</li>
+          <li><b>04 Upload contents</b> &mdash; what was read: events, runs, workflows.</li>
+        </ul>
+      </details>
+    </div>
     <div class="row" id="uploadPanel">
       <div class="field grow">
         <label for="file">Trace file(s) (.json / .jsonl) <span class="hint">select several to analyze together</span></label>
@@ -240,6 +263,14 @@ hf auth login</pre>
           <code>hf auth login</code> asks for the token from step 4 and saves it, so you don't need to paste it again. Both this app (when you run it on your own machine) and the converter use the saved token. To convert a dataset to a trace file:
 <pre class="code">python -m ingest.convert https://huggingface.co/datasets/cx-cmu/agent_trajectories --hf-file swebench.jsonl --limit 10 -o traces.jsonl</pre>
         </div>
+        <div class="hf-cli"><b>What to expect</b> &mdash; public datasets are other people's agents, so there is no answer key: the report shows what repeats, but nothing says what it <i>should</i> find. Most datasets leave out tokens, cost or timing; a note at the top of the report says which and what that changes. Ten sessions is often too few to see repeats; try 50&ndash;200.
+          <ul style="margin:6px 0 0;padding-left:20px;line-height:1.6">
+            <li><b>01 Summary</b> &mdash; each repeat worth fixing, with the evidence and the fix.</li>
+            <li><b>02 Repetition</b> &mdash; repeated step chains and repeated identical calls.</li>
+            <li><b>03 Nodes</b> &mdash; every operation, costliest first.</li>
+            <li><b>04 Upload contents</b> &mdash; what was read.</li>
+          </ul>
+        </div>
       </details>
       <div class="row">
         <div class="field grow">
@@ -269,11 +300,29 @@ hf auth login</pre>
     </div>
 
     <div id="generatePanel" hidden>
+      <details class="hf-guide tab-guide" id="generateGuide" open>
+        <summary>What this tab does, and what to expect</summary>
+        <p>Makes sample traces so you can try the app without your own data. <b>Agent trace events</b> come from six mock agents (security, support, release, code review, data pipeline, sales), each built to contain specific findings; <b>Claude Code sessions</b> imitate Claude Code's session files, optionally with fields left out.</p>
+        <ol>
+          <li><b>Pick the format and size</b> &mdash; more lines means more repeated inputs, so more findings show up (2,000 lines is a good start).</li>
+          <li><b>Click "Generate"</b>, then <b>"Run pipeline"</b>.</li>
+        </ol>
+        <p><b>What to expect</b> (agent trace events, 2,000 lines): the report finds most of what the analyzed agent was built to contain and none of its traps. Below about 500 lines it finds almost nothing, because inputs rarely repeat.</p>
+        <p style="margin-top:10px"><b>What the report shows</b> (after "Run pipeline"):</p>
+        <ul>
+          <li><b>01 Summary</b> &mdash; where the money goes and what to change: each repeat worth fixing, the evidence, the observed saving and the fix (cache it, use a rule, script the steps).</li>
+          <li><b>02 Repetition</b> &mdash; the same steps in the same order across runs, and the same call with the same input.</li>
+          <li><b>03 Nodes</b> &mdash; every distinct operation, costliest first, and whether the same input ever gave a different result.</li>
+          <li><b>04 Upload contents</b> &mdash; what was read: events, runs, workflows.</li>
+          <li><b>05 Expected vs. found</b> &mdash; only for the mock agents: each finding the agent was built to contain (and each trap it should not flag) next to what section 01 found, ✓ or ✗.</li>
+          <li><b>06 Validate</b> &mdash; each step's "same answer every time" call against the known answer.</li>
+        </ul>
+      </details>
       <div class="genrow">
         <div class="field">
           <label for="genFormat">Format <span class="hint">what kind of trace data</span></label>
           <select id="genFormat">
-            <option value="events" selected>Agent trace events (3 mock agents)</option>
+            <option value="events" selected>Agent trace events (6 mock agents)</option>
             <option value="claude_code">Claude Code sessions</option>
           </select>
         </div>
@@ -337,8 +386,8 @@ hf auth login</pre>
           <input type="number" id="actions6" min="4" max="20" value="8">
         </div>
         <div class="field">
-          <label for="totalLines">Total lines <span class="hint">optional, multiple of 20</span></label>
-          <input type="number" id="totalLines" min="20" step="20" placeholder="1 run per agent">
+          <label for="totalLines">Total lines <span class="hint">multiple of 20. Findings need repeated inputs: under ~500 lines expect almost none, 2,000 finds most</span></label>
+          <input type="number" id="totalLines" min="20" step="20" value="2000" placeholder="1 run per agent">
         </div>
         <div class="field">
           <label for="variance">Variance <span class="hint">spread of cost/latency/tokens</span></label>
@@ -366,6 +415,16 @@ hf auth login</pre>
     </div>
 
     <div id="sweepPanel" hidden>
+      <details class="hf-guide tab-guide" id="sweepGuide" open>
+        <summary>What this tab does, and what to expect</summary>
+        <p>A health check of the app itself, not of your data. It generates fresh sample data for <b>24 settings</b>, one change at a time from a fixed baseline, and runs each through the whole pipeline:</p>
+        <ul>
+          <li><b>number of agents</b> (1 to 6) and <b>how much answers vary</b> (low / mid / high);</li>
+          <li><b>trace size</b> (1,000 to 10,000 lines);</li>
+          <li><b>capacity settings</b> (how peak demand is measured, headroom, cost and value overrides).</li>
+        </ul>
+        <p><b>What to expect</b>: all 24 pass in under a minute. Each row shows whether the run finished, how long it took, and how many "same answer every time" calls matched the known answer. A FAIL means the pipeline crashed on that setting; the error is in the row.</p>
+      </details>
       <div class="genrow">
         <div class="field">
           <label for="sweepSeed">Seed <span class="hint">reused across every case, for an apples-to-apples comparison</span></label>
@@ -378,6 +437,29 @@ hf auth login</pre>
     </div>
 
     <div id="pocPanel" hidden>
+      <details class="hf-guide poc-guide" id="pocGuide" open>
+        <summary>What this POC does, and what it should find</summary>
+        <p>On real agent traces nobody knows the right answers, so there is nothing to grade the app against. This POC builds <b>six mock agents where we do know</b>: each was written on purpose to contain specific things worth fixing (a lookup to cache, an LLM choice a simple rule could make, a fixed chain of steps, an LLM step that gives different answers to the same input) and a few <b>traps</b> the app should leave alone. It then runs the app on their traces and checks what it finds.</p>
+        <ol>
+          <li><b>Generate</b> traces from the six agents: security (CVE), support, release, code review, data pipeline and sales.</li>
+          <li><b>Pick the cut-offs</b> the app uses to decide "this step always gives the same answer" (the calibration datasets below).</li>
+          <li><b>Test</b> those cut-offs on new datasets at growing sizes, from 100 to 10,000 trace lines, to find the point where more data stops changing the answers.</li>
+          <li><b>Check</b> that the app's #1 "fix this first" pick is the same across datasets.</li>
+          <li><b>Estimate</b> the money saved by caching (modeled, not measured).</li>
+          <li><b>Compare</b> what each agent was built to contain with what the app actually found (Phase 6).</li>
+        </ol>
+        <p><b>What each agent was built to contain</b>. "Should flag: no" rows are traps: a finding there is a false alarm.</p>
+        <table id="pocExpectedPlan"><thead><tr><th>agent</th><th>what</th><th>where</th><th>should flag</th><th>why</th></tr></thead><tbody><tr><td colspan="5" class="hint">loading…</td></tr></tbody></table>
+        <p style="margin-top:12px"><b>What to expect when you run it</b> (default settings, about 15 seconds; measured on this version):</p>
+        <ul>
+          <li><b>About 15 of 17</b> built-in findings found at 2,000 lines, 16 at 5,000 or more. Usually missed: <code>analyze_remediation</code> and <code>diagnose_failure</code>, which give a different answer only 20% of the time. That is subtle and needs more data to see.</li>
+          <li><b>No traps flagged</b> from 2,000 lines on. With fewer lines an occasional false alarm can show up: a few repeats aren't enough to tell luck from a pattern.</li>
+          <li><b>Around 15 "found, not planted"</b>. Mostly LLM steps that happened to give the same answer to the same input in this data, e.g. "cache <code>classify_severity</code>". They are real in the data, just not built in on purpose.</li>
+          <li><b>Almost nothing below 500 lines</b>: every finding needs the same input to show up more than once.</li>
+          <li><b>The verdict depends on how many datasets you use.</b> With 5 + 5 it usually says SUPPORTED (settles at 2,000 lines). With 30 + 30 it says NOT YET SUPPORTED: more datasets expose one wrong call at the default cut-offs, so a stricter cut-off is picked, and then the app can judge only about a third of the steps, below the bar for "settled". That is an honest result, not a bug.</li>
+        </ul>
+        <p class="hint">The mock agents are simpler than real ones, so matching them doesn't prove the app is right on real traces. Each miss or false alarm is a concrete case to look at.</p>
+      </details>
       <div class="genrow">
         <div class="field">
           <label for="pocCalSeeds">Calibration seeds <span class="hint">The app decides "always gives the same answer" using a few cut-offs (e.g. "an input must repeat at least 3 times before we judge it"). To pick those cut-offs, it makes this many separate sample datasets, tries every combination on each, and keeps the one that is right most often. More datasets: a safer pick, but a slower run.</span></label>
@@ -505,9 +587,24 @@ hf auth login</pre>
     <div id="recContainer"></div>
     </details>
 
+    <div id="repExpectedSection" hidden>
+      <h2><span class="idx">05</span>Expected vs. found <span style="font-size:12px;color:var(--faint)">— generated data only: what the mock agent was built to contain</span></h2>
+      <p class="lede">This workflow comes from one of the mock agents in <code>rawdata_gen</code>, so we know what it should contain: a lookup that always returns the same answer (cache it), an LLM choice a rule could make, a fixed chain of steps, an LLM step that varies for the same input (hidden state), and traps the report should <b>not</b> flag. Each row is one of those, next to whether section 01 listed it. ✓ = the report got it right, ✗ = missed or false alarm. Synthetic data, so a match doesn't prove it works on real agents; every ✗ is a concrete case to look at.</p>
+      <p class="takeaway" id="repExpectedTakeaway"></p>
+      <div class="stats explained" id="repExpectedStats"></div>
+      <table id="repExpectedTable"><thead><tr><th>agent workflow</th><th>what</th><th>where</th><th>expected</th><th>found</th><th>why it was planted / evidence</th></tr></thead><tbody></tbody></table>
+      <details class="poc-more"><summary>Found but not planted <span class="hint" id="repUnplannedCount"></span></summary>
+        <table id="repUnplannedTable"><thead><tr><th>agent workflow</th><th>what</th><th>where</th><th class="num">times</th><th class="num">saving</th><th>evidence</th></tr></thead><tbody></tbody></table>
+      </details>
+      <details class="poc-more" id="repDeterminismMore"><summary>Determinism per node: expected vs. classified</summary>
+        <table id="repDeterminismTable"><thead><tr><th>node</th><th class="num">planted rate</th><th>expected</th><th>classified</th><th>outcome</th></tr></thead><tbody></tbody></table>
+      </details>
+      <pre class="code" id="repExpectedNote"></pre>
+    </div>
+
     <div id="validationSection" style="display:none">
-      <h2><span class="idx">05</span>Validate <span style="font-size:12px;color:var(--faint)">— expected vs. actual, against synthetic ground truth</span></h2>
-      <p class="lede">Only available for generated data, where each node's true determinism is actually known — compares the classifier's prediction against that known answer instead of just trusting its own output.</p>
+      <h2><span class="idx">06</span>Validate <span style="font-size:12px;color:var(--faint)">— determinism calls vs. the known answer (generated data only)</span></h2>
+      <p class="lede">Generated data only, where we know whether each step really gives the same answer every time. Each row: what the step was built to do, what the app concluded, and whether that's right. <b>"Not judged: too few repeats"</b> is not an error: the app only calls a step after seeing the same input repeat, so on small data it holds back instead of guessing. <b>Coverage</b> = the share of steps it judged; generate more lines to raise it. Accuracy / precision / recall count only the judged steps.</p>
       <div class="stats" id="validationStats"></div>
       <table id="validationTable"><thead><tr><th>Node</th><th class="num">True determinism_rate</th><th>Expected</th><th>Predicted</th><th>Outcome</th></tr></thead><tbody></tbody></table>
 
@@ -520,52 +617,57 @@ hf auth login</pre>
   </div>
 
   <div id="sweepReport" style="display:none">
-    <h2><span class="idx">S</span>Run tests <span style="font-size:12px;color:var(--faint)">— sweep across agent count, variance, demand_model, total_lines (1k&ndash;10k), and formula overrides</span></h2>
-    <p class="lede">Generates a fresh synthetic dataset per case, holding every other dimension at a fixed baseline, and runs it through the full pipeline — a regression/stress test of the pipeline itself, not something to tune by hand. Current shipped determinism thresholds are min_repeated_inputs=3, min_repeat_coverage=0.1, min_repeated_observations=10 — with all six agents graded, the POC tab's Phase 1 calibration found these make 1 false negative in 30 seeds and picked (10, 0.1, 10) instead, at the cost of classifying about half as many nodes; that change hasn't been applied here; see the POC tab for the measured comparison before tuning thresholds by hand.</p>
-    <div class="stats" id="sweepStats"></div>
-    <table id="sweepTable"><thead><tr><th>Group</th><th>Case</th><th>Status</th><th class="num">events</th><th class="num">elapsed (ms)</th><th class="num">x*</th><th class="num">y*</th><th class="num">accuracy</th><th>error</th></tr></thead><tbody></tbody></table>
+    <h2><span class="idx">01</span>Summary <span style="font-size:12px;color:var(--faint)">— did the pipeline survive every setting?</span></h2>
+    <div class="stats explained" id="sweepStats"></div>
+    <p class="takeaway" id="sweepTakeaway"></p>
+
+    <h2><span class="idx">02</span>By setting <span style="font-size:12px;color:var(--faint)">— one change at a time from the baseline</span></h2>
+    <p class="lede">Each row is fresh sample data with one setting changed (same seed everywhere), run through the whole pipeline. <b>Planted found</b> = of what the analyzed agent was built to contain, how many the report listed (✓ when all, and no trap flagged). <b>Calls right</b> = "same answer every time" calls that match the known answer; <b>too few repeats</b> = steps whose inputs didn't repeat enough to call. <b>Capacity</b> is the advanced B-POP result (x* = LLM-call capacity to provision).</p>
+    <div id="sweepGroups"></div>
+    <pre class="code" id="sweepNote"></pre>
   </div>
 
   <div id="pocReport" style="display:none">
-    <h2><span class="idx">P</span>POC <span style="font-size:12px;color:var(--faint)">— sample-size stabilization experiment</span></h2>
+    <h2><span class="idx">01</span>Summary <span style="font-size:12px;color:var(--faint)">— how much data the profiler needs before its answers stop changing</span></h2>
     <p class="lede">This answers one question: <strong>how much synthetic trace data does the profiler actually need before its determinism calls stop changing?</strong> It is not looking for the sample size with the highest accuracy — it is looking for the <em>smallest</em> sample size beyond which feeding it more data stops meaningfully improving the result. Below that point, trust the numbers less; above it, more data is just cost with no added benefit.</p>
     <p class="lede">How it gets there, phase by phase: <strong>(1)</strong> pick the best determinism thresholds by voting across several independent "calibration" datasets; <strong>(2)</strong> freeze those thresholds and re-run the profiler at increasing sample sizes on a completely separate set of "validation" datasets, watching where accuracy/recall/coverage level off; <strong>(3)</strong> check that the profiler's worst-offender recommendation is stable at that sample size, not a coin flip between seeds; <strong>(4)</strong> sanity-check the resulting B-POP capacity recommendation against the same workload; <strong>(5)</strong> model what the measured determinism rate would be worth in avoided LLM calls; <strong>(6)</strong> compare what each of the six mock agents was built to contain with what the report actually found. Every phase grades all six agents' workflows. Calibration and validation always use non-overlapping seeds, so the thresholds are never graded on the same data they were chosen from.</p>
-    <div class="stats" id="pocConclusionStats"></div>
+    <div class="stats explained" id="pocConclusionStats"></div>
+    <p class="takeaway" id="pocTakeaway"></p>
 
-    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 6 — expected vs. found</h3>
+    <h2><span class="idx">02</span>Expected vs. found <span style="font-size:12px;color:var(--faint)">— Phase 6: what each agent was built to contain next to what the report found</span></h2>
     <p class="lede">Each mock agent was written to contain specific things: a lookup that always returns the same answer (cache it), an LLM choice that a rule could make, a fixed chain of steps an LLM planner walks through, an LLM step that varies for the same input (hidden state), and traps the report should <em>not</em> flag. This table puts that plan next to what the report found on the same data. They won't match exactly — synthetic agents are simpler than real ones — but every miss and every false alarm is a concrete case to look at.</p>
     <div class="stats explained" id="pocExpectedStats"></div>
     <table id="pocExpectedTable"><thead><tr><th>agent workflow</th><th>what</th><th>where</th><th>expected</th><th>found</th><th>why it was planted / evidence</th></tr></thead><tbody></tbody></table>
     <details class="poc-more"><summary>Found but not planted <span class="hint" id="pocUnplannedCount"></span></summary>
       <table id="pocUnplannedTable"><thead><tr><th>agent workflow</th><th>what</th><th>where</th><th class="num">times</th><th class="num">saving</th><th>evidence</th></tr></thead><tbody></tbody></table>
     </details>
-    <details class="poc-more"><summary>Determinism per node: expected vs. classified</summary>
+    <details class="poc-more" id="pocDeterminismMore"><summary>Determinism per node: expected vs. classified</summary>
       <table id="pocDeterminismTable"><thead><tr><th>node</th><th class="num">planted rate</th><th>expected</th><th>classified</th><th>outcome</th></tr></thead><tbody></tbody></table>
     </details>
     <table id="pocExpectedCurve" style="margin-top:12px"><thead><tr><th class="num">sample size</th><th class="num">planted findings found</th><th class="num">false alarms</th></tr></thead><tbody></tbody></table>
     <pre class="code" id="pocExpectedNote"></pre>
 
-    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 1 — calibration</h3>
+    <h2><span class="idx">03</span>Calibration <span style="font-size:12px;color:var(--faint)">— Phase 1: picking the "same answer every time" cut-offs</span></h2>
     <p class="lede">Grid-searches the three determinism thresholds (<code>min_repeated_inputs</code>, <code>min_repeat_coverage</code>, <code>min_repeated_observations</code>) across every calibration seed together, and compares the best-scoring combination against the thresholds this app currently ships with. "Selected" is what Phase 2 onward actually uses — not automatically applied to the live defaults.</p>
     <div id="pocCalibrationBars" style="margin:18px 0 10px"></div>
     <table id="pocCalibrationTable"><thead><tr><th>Thresholds</th><th class="num">min_repeated_inputs</th><th class="num">min_repeat_coverage</th><th class="num">min_repeated_observations</th><th class="num">false negatives</th><th class="num">accuracy</th></tr></thead><tbody></tbody></table>
     <pre class="code" id="pocCalibrationExplain"></pre>
 
-    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 2 — sample-size curve</h3>
+    <h2><span class="idx">04</span>Sample size <span style="font-size:12px;color:var(--faint)">— Phase 2: answers at growing amounts of data</span></h2>
     <p class="lede">Thresholds are frozen at the Phase 1 "selected" values and never change again below. Each row regenerates fresh validation datasets at that sample size and reports the average classification quality across all validation seeds.</p>
     <table id="pocCurveTable"><thead><tr><th class="num">sample size</th><th class="num">mean accuracy</th><th class="num">accuracy std</th><th class="num">mean recall</th><th class="num">mean coverage</th><th class="num">insufficient evidence rate</th></tr></thead><tbody></tbody></table>
     <pre class="code" id="pocStabilizationNote"></pre>
 
-    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 3 — recommendation stability</h3>
+    <h2><span class="idx">05</span>Stability <span style="font-size:12px;color:var(--faint)">— Phase 3: is the #1 pick the same on every dataset?</span></h2>
     <p class="lede">At the stabilization sample size, does the profiler's "fix this first" recommendation actually hold up across different random datasets, or does it reshuffle seed to seed?</p>
     <div class="stats explained" id="pocStabilityStats"></div>
 
-    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 4 — B-POP evaluation</h3>
+    <h2><span class="idx">06</span>Capacity <span style="font-size:12px;color:var(--faint)">— Phase 4: B-POP capacity check, advanced</span></h2>
     <p class="lede">A separate check from classification accuracy above: does the B-POP leader/follower solve recommend a sensible capacity for the same workload at the stabilization sample size?</p>
     <div class="stats explained" id="pocBpopStats"></div>
     <pre class="code" id="pocBpopNote"></pre>
 
-    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 5 — modeled cost savings <span style="font-size:12px;color:var(--faint)">— synthetic/modeled, not measured production savings</span></h3>
+    <h2><span class="idx">07</span>Savings <span style="font-size:12px;color:var(--faint)">— Phase 5: modeled from sample data, not measured</span></h2>
     <p class="lede">Assumes only nodes classified DETERMINISTIC can be cached to one call per unique input; NON_DETERMINISTIC and INSUFFICIENT_EVIDENCE nodes are modeled as zero savings — a deliberately conservative floor, not a claim that non-deterministic nodes have no optimization value.</p>
     <div class="stats explained" id="pocCostStats"></div>
     <div id="pocCostBars" style="margin:18px 0 10px"></div>
@@ -644,10 +746,12 @@ function setMode(m) {
   tabSweep.classList.toggle('active', m === 'sweep');
   tabPOC.classList.toggle('active', m === 'poc');
   uploadPanel.hidden = m !== 'upload';
+  document.getElementById('uploadGuideWrap').hidden = m !== 'upload';
   generatePanel.hidden = m !== 'generate';
   hfPanel.hidden = m !== 'hf';
   sweepPanel.hidden = m !== 'sweep';
   pocPanel.hidden = m !== 'poc';
+  if (m === 'poc') loadPocExpected();
   formulaRow.hidden = m === 'sweep' || m === 'poc';
   submitRow.hidden = m === 'sweep' || m === 'poc';
   pipelineEl.style.display = (m === 'sweep' || m === 'poc') ? 'none' : '';
@@ -665,11 +769,13 @@ document.getElementById('hfUrl').addEventListener('input', () => {
   document.getElementById('hfFile').innerHTML = '<option value="">(the file the link names)</option>';
 });
 
-// the guide stays open until the viewer closes it once
-const hfGuide = document.getElementById('hfGuide');
-try { if (localStorage.getItem('hfGuideClosed') === '1') hfGuide.open = false; } catch (e) { /* no storage */ }
-hfGuide.addEventListener('toggle', () => {
-  try { localStorage.setItem('hfGuideClosed', hfGuide.open ? '0' : '1'); } catch (e) { /* no storage */ }
+// each tab's guide stays open until the viewer closes it once
+['hfGuide', 'uploadGuide', 'generateGuide', 'sweepGuide', 'pocGuide'].forEach(id => {
+  const guide = document.getElementById(id);
+  try { if (localStorage.getItem(id + 'Closed') === '1') guide.open = false; } catch (e) { /* no storage */ }
+  guide.addEventListener('toggle', () => {
+    try { localStorage.setItem(id + 'Closed', guide.open ? '0' : '1'); } catch (e) { /* no storage */ }
+  });
 });
 document.querySelectorAll('.hf-example').forEach(btn => btn.addEventListener('click', () => {
   document.getElementById('hfUrl').value = btn.dataset.url;
@@ -684,7 +790,7 @@ document.querySelectorAll('.hf-example').forEach(btn => btn.addEventListener('cl
 // a 401 / 403 means a token problem: open the guide at the token step
 function hfAuthHint(status) {
   if (status !== 401 && status !== 403) return;
-  hfGuide.open = true;
+  document.getElementById('hfGuide').open = true;
   const step = document.getElementById('hfGuideToken');
   step.classList.add('flag');
   step.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -930,25 +1036,69 @@ sweepBtn.addEventListener('click', async () => {
   }
 });
 
+const OUTCOME_LABELS = {
+  true_positive: 'correct ✓ (varies)',
+  true_negative: 'correct ✓ (same answer)',
+  false_positive: 'wrong ✗ (called it varying)',
+  false_negative: 'wrong ✗ (called it always-same)',
+  insufficient_evidence: 'not judged: too few repeats',
+};
+const truthOutcomeLabel = o => OUTCOME_LABELS[o] || o.replace(/_/g, ' ');
+
+const SWEEP_GROUPS = {
+  baseline: ['Baseline', 'the reference settings: six agents, mid variance, 2,000 lines, p95 demand'],
+  agent_count: ['Number of agents', 'how many mock agents write into the same trace'],
+  variance: ['How much answers vary', 'how often a mock step gives a different answer for the same input'],
+  demand_model: ['How peak demand is measured', 'which percentile of per-run LLM calls sizes capacity (advanced B-POP setting)'],
+  total_lines: ['Trace size', 'trace lines generated: more lines, more repeated inputs'],
+  formula_override: ['Capacity settings', 'headroom and cost / value overrides (advanced B-POP settings)'],
+};
+
 function renderSweep(data) {
+  const ok = data.results.filter(r => r.passed);
+  const graded = ok.filter(r => r.planted_total);
+  const clean = graded.filter(r => r.planted_found === r.planted_total && !r.false_alarms);
+  const slowest = ok.reduce((a, r) => (!a || r.elapsed_ms > a.elapsed_ms ? r : a), null);
   document.getElementById('sweepStats').innerHTML =
-    statCard(data.num_cases, 'cases') +
-    statCard(data.num_passed, 'passed') +
-    statCard(data.num_failed, 'failed') +
-    statCard(data.all_passed ? 'yes' : 'no', 'all passed') +
-    statCard(data.seed, 'seed');
-  document.querySelector('#sweepTable tbody').innerHTML = data.results.map(r => `
-    <tr>
-      <td>${esc(r.group)}</td>
-      <td>${esc(r.label)}</td>
-      <td class="${r.passed ? 'good' : 'bad'}">${r.passed ? 'pass' : 'FAIL'}</td>
-      <td class="num">${r.num_events ?? '—'}</td>
-      <td class="num">${r.elapsed_ms != null ? r.elapsed_ms.toFixed(1) : '—'}</td>
-      <td class="num">${r.x && r.x.x != null ? r.x.x.toFixed(3) : '—'}</td>
-      <td class="num">${r.y && r.y.y != null ? r.y.y.toFixed(3) : '—'}</td>
-      <td class="num">${r.accuracy != null ? r.accuracy.toFixed(3) : '—'}</td>
-      <td class="${r.error ? 'bad' : ''}">${r.error ? esc(r.error) : ''}</td>
-    </tr>`).join('');
+    statCardExplained(`${data.num_passed}/${data.num_cases}`, 'settings passed',
+      'the pipeline finished without crashing. A failure means a bug in the app, not in the data.') +
+    statCardExplained(graded.length ? `${clean.length}/${graded.length}` : '—', 'all planted found',
+      'settings where the report listed everything the analyzed agent was built to contain, with no trap flagged.') +
+    statCardExplained(slowest ? `${(slowest.elapsed_ms / 1000).toFixed(1)} s` : '—', 'slowest setting',
+      slowest ? `${slowest.label}, ${slowest.num_events} trace lines.` : '') +
+    statCardExplained(data.seed, 'seed', 'the same sample data seed for every setting, so rows differ only by the setting changed.');
+  const failed = data.results.filter(r => !r.passed);
+  const misses = graded.filter(r => r.planted_found < r.planted_total).map(r => r.label);
+  document.getElementById('sweepTakeaway').textContent =
+    (failed.length ? `${failed.length} setting${failed.length === 1 ? '' : 's'} crashed: ${failed.map(r => r.label).join(', ')}. ` : 'Every setting ran to the end. ') +
+    (misses.length ? `Some planted findings were missed at ${misses.join(', ')}: usually too few repeated inputs at that setting, not a crash.` : 'Every graded setting found all planted findings.');
+  const pct = v => v != null ? `${(v * 100).toFixed(0)}%` : '—';
+  const groups = [...new Set(data.results.map(r => r.group))];
+  document.getElementById('sweepGroups').innerHTML = groups.map(g => {
+    const [title, hint] = SWEEP_GROUPS[g] || [g, ''];
+    const rows = data.results.filter(r => r.group === g).map(r => {
+      const planted = r.planted_total
+        ? `<td class="${r.planted_found === r.planted_total && !r.false_alarms ? 'verdict-ok' : 'verdict-miss'}">${r.planted_found}/${r.planted_total}${r.false_alarms ? `, ${r.false_alarms} false alarm${r.false_alarms === 1 ? '' : 's'}` : ''} ${r.planted_found === r.planted_total && !r.false_alarms ? '✓' : '✗'}</td>`
+        : '<td>—</td>';
+      return `
+      <tr>
+        <td>${esc(r.label)}</td>
+        <td class="${r.passed ? 'good' : 'bad'}">${r.passed ? 'pass' : 'FAIL'}</td>
+        <td>${r.selected_workflow ? esc(r.selected_workflow) : '—'}</td>
+        <td class="num">${r.num_events ?? '—'}</td>
+        ${planted}
+        <td class="num">${pct(r.accuracy)}</td>
+        <td class="num">${pct(r.insufficient_rate)}</td>
+        <td class="num">${r.x && r.x.x != null ? r.x.x.toFixed(1) : '—'}</td>
+        <td class="num">${r.elapsed_ms != null ? `${(r.elapsed_ms / 1000).toFixed(1)} s` : '—'}</td>
+      </tr>${r.error ? `<tr><td colspan="9" class="bad">${esc(r.error)}</td></tr>` : ''}`;
+    }).join('');
+    return `
+    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">${esc(title)} <span style="font-size:12px;color:var(--faint)">— ${esc(hint)}</span></h3>
+    <table><thead><tr><th>setting</th><th>status</th><th>analyzed workflow</th><th class="num">trace lines</th><th>planted found</th><th class="num">calls right</th><th class="num">too few repeats</th><th class="num">capacity x*</th><th class="num">time</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }).join('');
+  document.getElementById('sweepNote').textContent =
+    'Each row grades only the workflow the report analyzes (the one with the most events). The POC tab grades every agent across many seeds; this tab only checks the pipeline holds up across settings.';
 }
 
 const pocBtn = document.getElementById('pocBtn');
@@ -986,23 +1136,49 @@ const OPPORTUNITY_LABELS = {
   REVIEW_HIDDEN_STATE: 'hidden state',
 };
 
-function renderPocExpected(p6) {
-  const section = ['pocExpectedStats', 'pocExpectedTable', 'pocExpectedCurve', 'pocExpectedNote'].map(id => document.getElementById(id));
+let pocExpectedLoaded = false;
+async function loadPocExpected() {
+  if (pocExpectedLoaded) return;
+  pocExpectedLoaded = true;
+  const body = document.querySelector('#pocExpectedPlan tbody');
+  try {
+    const resp = await fetch('/poc/expected');
+    if (!resp.ok) throw new Error(resp.status);
+    const agents = await resp.json();
+    body.innerHTML = agents.flatMap(a => a.findings.map((f, i) => `
+      <tr>
+        <td>${i === 0 ? `<b>${esc(a.agent)}</b><div class="hint">${esc(a.workflow)}</div>` : ''}</td>
+        <td>${esc(OPPORTUNITY_LABELS[f.type] || f.type)}</td>
+        <td><code>${esc(f.steps ? f.steps.join(' → ') : f.node)}</code></td>
+        <td>${f.expect ? 'yes' : '<b>no</b> (trap)'}</td>
+        <td>${esc(f.why)}</td>
+      </tr>`)).join('');
+  } catch (err) {
+    pocExpectedLoaded = false;
+    body.innerHTML = `<tr><td colspan="5" class="hint">Couldn't load the list (${esc(String(err.message || err))}).</td></tr>`;
+  }
+}
+
+// Expected vs. found: shared by the POC (Phase 6, all agents) and the
+// report for generated data (prefix 'rep', the analyzed workflow only).
+function renderExpected(p6, prefix) {
+  const $ = id => document.getElementById(prefix + id);
+  const section = ['ExpectedStats', 'ExpectedTable', 'ExpectedCurve', 'ExpectedNote'].map($).filter(Boolean);
   if (!p6) { section.forEach(el => { el.hidden = true; }); return; }
   section.forEach(el => { el.hidden = false; });
   const s = p6.summary;
   const what = t => `<span title="${esc(t)}">${esc(OPPORTUNITY_LABELS[t] || t)}</span>`;
   const money = v => v ? `$${v.toFixed(3)}` : '—';
-  document.getElementById('pocExpectedStats').innerHTML =
+  $('ExpectedStats').innerHTML =
     statCardExplained(`${s.planted_found}/${s.planted_total}`, 'planted findings found',
-      `of the opportunities the agents were built to contain, how many the report listed (at ${p6.sample_size} trace lines, seed ${p6.seed}).`) +
+      `of the opportunities the agents were built to contain, how many the report listed${p6.sample_size ? ` (at ${p6.sample_size} trace lines, seed ${p6.seed})` : ''}.`) +
     statCardExplained(`${s.false_alarms}/${s.traps}`, 'false alarms',
       'traps the report flagged anyway — e.g. "cache" on a call that writes a ticket or sends a message.') +
     statCardExplained(s.unplanned, 'found, not planted',
       'other findings nobody planted: often real (runs that happened to share an input), sometimes the profiler over-reaching.') +
-    statCardExplained(`${s.determinism_agree}/${s.determinism_nodes}`, 'determinism calls correct',
-      `nodes classified the way they were built; ${s.determinism_insufficient} more had too few repeated inputs to call either way.`);
-  document.querySelector('#pocExpectedTable tbody').innerHTML = p6.rows.map(r => `
+    (s.determinism_nodes ? statCardExplained(`${s.determinism_agree}/${s.determinism_nodes}`, 'determinism calls correct',
+      `nodes classified the way they were built; ${s.determinism_insufficient} more had too few repeated inputs to call either way.`) : '');
+  $('ExpectedTable').tBodies[0].innerHTML = p6.rows.map(r => `
     <tr>
       <td>${esc(r.workflow)}</td>
       <td>${what(r.type)}</td>
@@ -1011,8 +1187,8 @@ function renderPocExpected(p6) {
       <td class="${r.agrees ? 'verdict-ok' : 'verdict-miss'}">${r.found ? 'found' : 'not found'} ${r.agrees ? '✓' : '✗'}</td>
       <td>${esc(r.why)}${r.evidence ? `<div class="hint">${esc(r.evidence)}</div>` : ''}</td>
     </tr>`).join('');
-  document.getElementById('pocUnplannedCount').textContent = `(${p6.unplanned.length})`;
-  document.querySelector('#pocUnplannedTable tbody').innerHTML = p6.unplanned.map(u => `
+  $('UnplannedCount').textContent = `(${p6.unplanned.length})`;
+  $('UnplannedTable').tBodies[0].innerHTML = p6.unplanned.map(u => `
     <tr>
       <td>${esc(u.workflow)}</td>
       <td>${what(u.type)}</td>
@@ -1021,18 +1197,21 @@ function renderPocExpected(p6) {
       <td class="num">${money(u.saving)}</td>
       <td class="hint">${esc(u.evidence)}</td>
     </tr>`).join('');
-  document.querySelector('#pocDeterminismTable tbody').innerHTML = p6.determinism.map(d => `
+  $('DeterminismTable').tBodies[0].innerHTML = p6.determinism.map(d => `
     <tr>
       <td><code>${esc(d.node)}</code></td>
       <td class="num">${d.determinism_rate.toFixed(2)}</td>
       <td>${esc(d.truth)}</td>
       <td>${esc(d.predicted)}</td>
-      <td class="${d.truth === d.predicted ? 'verdict-ok' : d.outcome === 'insufficient_evidence' ? '' : 'verdict-miss'}">${esc(d.outcome.replace(/_/g, ' '))}</td>
+      <td class="${d.truth === d.predicted ? 'verdict-ok' : d.outcome === 'insufficient_evidence' ? '' : 'verdict-miss'}">${esc(truthOutcomeLabel(d.outcome))}</td>
     </tr>`).join('');
-  document.querySelector('#pocExpectedCurve tbody').innerHTML = p6.by_sample_size.map(r => `
+  const detMore = $('DeterminismMore');
+  if (detMore) detMore.hidden = !p6.determinism.length;
+  if ($('ExpectedCurve')) $('ExpectedCurve').tBodies[0].innerHTML = p6.by_sample_size.map(r => `
     <tr><td class="num">${r.sample_size}</td><td class="num">${r.planted_found}/${r.planted_total}</td><td class="num">${r.false_alarms}</td></tr>`).join('');
-  document.getElementById('pocExpectedNote').textContent =
-    `${p6.note}\n\nThe last table reruns the comparison at each sample size (seed ${p6.seed}): most findings need repeated inputs, so they only appear once there is enough data.`;
+  $('ExpectedNote').textContent = p6.by_sample_size
+    ? `${p6.note}\n\nThe last table reruns the comparison at each sample size (seed ${p6.seed}): most findings need repeated inputs, so they only appear once there is enough data.`
+    : p6.note;
 }
 
 function renderPoc(data) {
@@ -1061,7 +1240,13 @@ function renderPoc(data) {
         ? `modeled reduction in LLM call cost if every node classified DETERMINISTIC were cached to one call per unique input — a conservative, synthetic estimate, not a measured production number.`
         : '—');
 
-  renderPocExpected(data.phase6_expected_vs_found);
+  renderExpected(data.phase6_expected_vs_found, 'poc');
+  const p6 = data.phase6_expected_vs_found;
+  document.getElementById('pocTakeaway').textContent =
+    (data.conclusion === 'SUPPORTED'
+      ? `Answers settle at ${p2.stabilization_point} trace lines: below that, treat the report as under-sampled.`
+      : 'Answers had not settled by the largest size tried: more data, or more datasets, before trusting a minimum.') +
+    (p6 ? ` The report found ${p6.summary.planted_found} of ${p6.summary.planted_total} planted findings and ${p6.summary.false_alarms} of ${p6.summary.traps} traps (section 02).` : '');
 
   const accBefore1 = p1.current_defaults?.mean_accuracy ?? 0;
   const accAfter1 = p1.selected?.mean_accuracy ?? 0;
@@ -1466,6 +1651,18 @@ function render(data) {
       </div>
     </div>`).join('');
 
+  // Expected vs. found (only for workflows from the mock agents)
+  const evf = data.expected_vs_found;
+  document.getElementById('repExpectedSection').hidden = !evf;
+  if (evf) {
+    renderExpected(evf, 'rep');
+    const es = evf.summary;
+    document.getElementById('repExpectedTakeaway').textContent =
+      `${evf.workflow}: the report found ${es.planted_found} of ${es.planted_total} planted findings` +
+      (es.traps ? ` and flagged ${es.false_alarms} of ${es.traps} trap${es.traps === 1 ? '' : 's'}` : '') +
+      (es.planted_found < es.planted_total ? '. Misses usually mean too few repeated inputs: generate more lines.' : '.');
+  }
+
   // Validate (only present when the run carried synthetic ground truth)
   const validationSectionEl = document.getElementById('validationSection');
   if (data.validation) {
@@ -1476,14 +1673,14 @@ function render(data) {
       statCard(v.precision != null ? v.precision.toFixed(3) : '—', 'precision') +
       statCard(v.recall != null ? v.recall.toFixed(3) : '—', 'recall') +
       statCard(`${v.false_negatives} FN / ${v.false_positives} FP`, 'confusion') +
-      statCard(`${(v.coverage * 100).toFixed(0)}%`, 'coverage');
+      statCard(`${(v.coverage * 100).toFixed(0)}%`, 'coverage (steps judged)');
     document.querySelector('#validationTable tbody').innerHTML = v.per_node.map(n => `
       <tr>
         <td>${esc(n.node)}</td>
         <td class="num">${n.determinism_rate.toFixed(2)}</td>
         <td><span class="pill ${classificationPillClass(n.truth)}">${classificationLabel(n.truth)}</span></td>
         <td><span class="pill ${classificationPillClass(n.predicted)}">${classificationLabel(n.predicted)}</span></td>
-        <td class="${n.outcome.startsWith('false') ? 'warn' : ''}">${esc(n.outcome.replace(/_/g, ' '))}</td>
+        <td class="${n.outcome.startsWith('false') ? 'verdict-miss' : n.outcome.startsWith('true') ? 'verdict-ok' : ''}">${esc(truthOutcomeLabel(n.outcome))}</td>
       </tr>`).join('');
   } else {
     validationSectionEl.style.display = 'none';

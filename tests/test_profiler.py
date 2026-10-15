@@ -233,3 +233,27 @@ def test_run_pipeline_demand_model_changes_formula_defaults():
     assert report_p95["formula"]["defaults"]["demand_model"] == "p95"
     assert report_max["formula"]["defaults"]["demand_model"] == "max"
     assert report_p95["formula"]["defaults"]["max_demand"] < report_max["formula"]["defaults"]["max_demand"]
+
+
+def test_run_pipeline_compares_generated_data_with_what_the_agent_was_built_to_contain():
+    from profiler.sweep import _BASELINE, generate_dataset_for_config
+
+    events, manifest = generate_dataset_for_config(_BASELINE, seed=101)
+    report = run_pipeline(events, workflow="lead-qualification", ground_truth=manifest["ground_truth"])
+
+    evf = report["expected_vs_found"]
+    assert evf["workflow"] == "lead-qualification"
+    assert {r["workflow"] for r in evf["rows"]} == {"lead-qualification"}
+    summary = evf["summary"]
+    assert summary["planted_total"] == sum(1 for r in evf["rows"] if r["expected"])
+    assert summary["planted_found"] == summary["planted_total"]  # all 5 show up at 2000 lines
+    assert summary["false_alarms"] == 0
+    # ground truth was sent, so the per-node determinism table is filled too
+    assert summary["determinism_nodes"] == len(evf["determinism"]) > 0
+
+
+def test_run_pipeline_has_no_expected_vs_found_for_unknown_workflows():
+    events = [
+        TraceEvent(**{**e.model_dump(), "workflow": "my-own-agent"}) for e in load_traces(DATA_PATH)
+    ]
+    assert "expected_vs_found" not in run_pipeline(events)

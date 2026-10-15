@@ -30,6 +30,9 @@ def test_run_sweep_all_cases_pass_and_report_timing():
     for row in result["results"]:
         assert row["elapsed_ms"] >= 0
         assert row["num_events"] > 0
+        # every case analyzes one of the mock agents, so it is graded against what it was built to contain
+        assert 0 < row["planted_found"] <= row["planted_total"]
+        assert row["false_alarms"] == 0
 
 
 def test_run_sweep_endpoint_returns_sweep_report():

@@ -42,7 +42,8 @@ from rawdata_gen import (
 )
 from rawdata_gen.agents.common import to_jsonl
 from rawdata_gen.claude_code_sessions import generate_sessions
-from rawdata_gen.generate_traces import build_dataset_manifest
+from rawdata_gen.generate_traces import AGENT_GENERATORS, build_dataset_manifest
+from rawdata_gen.ground_truth import EXPECTED_FINDINGS
 
 
 class GenerateRequest(BaseModel):
@@ -374,6 +375,17 @@ def run_sweep_endpoint(seed: int = 1) -> dict:
 
 POC_MAX_SEED_COUNT = 10
 POC_MAX_CALIBRATION_SAMPLE_SIZE = 20000
+
+
+@app.get("/poc/expected")
+def poc_expected() -> list[dict]:
+    """What each mock agent was built to contain, in generator order -- the
+    "expected" side of the POC's expected-vs-found comparison."""
+    runs = generate_configured(len(AGENT_GENERATORS), [8] * len(AGENT_GENERATORS), rng=random.Random(0))
+    return [
+        {"agent": run.agent, "workflow": run.workflow, "findings": EXPECTED_FINDINGS.get(run.workflow, [])}
+        for run in runs
+    ]
 
 
 @app.post("/poc/run")

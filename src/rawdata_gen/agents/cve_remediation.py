@@ -16,7 +16,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
     severity = rng.choice(SEVERITIES)
     issue_exists = rng.random() < 0.5
     run_id = f"cve-{rng.randint(0, 999999):06d}"
-    run = Run("cve-remediation-agent", "security-agent", run_id, "v1.0")
+    run = Run("cve-remediation-agent", "security-agent", run_id, "v1.0", user_input=f"Remediate {cve}")
     parent = run.run_id
     state = {"severity": severity, "fix_available": not issue_exists}
     run.action(
