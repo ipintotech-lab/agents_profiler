@@ -1,4 +1,5 @@
 import json
+import random
 
 import pytest
 from fastapi.testclient import TestClient
@@ -266,3 +267,19 @@ def test_validate_seed_range_endpoint_rejects_bad_action_count():
     client = TestClient(app)
     resp = client.post("/validate_seed_range", json={"agent_count": 1, "actions_per_agent": [2]})
     assert resp.status_code == 400
+
+
+def test_all_six_agents_generate_their_planned_nodes():
+    from rawdata_gen.generate_traces import AGENT_GENERATORS
+    from rawdata_gen.ground_truth import EXPECTED_FINDINGS
+
+    runs = generate_configured(len(AGENT_GENERATORS), [8] * len(AGENT_GENERATORS), 2000, rng=random.Random(3))
+    nodes: dict[str, set[str]] = {}
+    for run in runs:
+        for e in run.events:
+            nodes.setdefault(e["workflow"], set()).add(e["node"])
+    assert set(nodes) == set(EXPECTED_FINDINGS)
+    for workflow, findings in EXPECTED_FINDINGS.items():
+        for f in findings:
+            for node in f.get("steps", [f.get("node")]):
+                assert node in nodes[workflow], (workflow, node)

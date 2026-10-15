@@ -13,6 +13,11 @@ output across many independent seeds and sample sizes. ``sweep.py`` is
 untouched: it is a one-seed regression/QA sweep, not this statistical
 experiment.
 
+Every phase grades all the workflows in the generated data (one per mock
+agent), not only the largest one. Phase 6 compares what each agent's
+generator planted (``rawdata_gen.ground_truth.EXPECTED_FINDINGS``) with the
+opportunities the report actually lists.
+
 Phase 1 (multi-seed calibration) and Phase 2 (sample-size stabilization)
 use disjoint seed ranges on purpose (``CALIBRATION_SEEDS`` vs.
 ``VALIDATION_SEEDS``) -- thresholds are never judged on the same data
@@ -24,6 +29,8 @@ import statistics
 from typing import Any
 
 from ingest.trace_schema import TraceEvent
+from rawdata_gen.generate_traces import AGENT_GENERATORS
+from rawdata_gen.ground_truth import EXPECTED_FINDINGS
 
 from .calibration import (
     DEFAULT_MIN_REPEAT_COVERAGE_GRID,
@@ -37,7 +44,10 @@ from .determinism import (
     MIN_REPEATED_OBSERVATIONS,
 )
 from .mine import mine, observe, recommend, score
+from .opportunities import find_opportunities
+from .patterns import find_repetition
 from .sweep import generate_dataset_for_config
+from .validation import validate
 
 CALIBRATION_SEEDS: tuple[int, ...] = tuple(range(1, 31))
 VALIDATION_SEEDS: tuple[int, ...] = tuple(range(101, 131))
@@ -46,8 +56,9 @@ CALIBRATION_SAMPLE_SIZE = 2000
 SAMPLE_SIZE_STEPS: tuple[int, ...] = (100, 500, 1000, 2000, 5000, 10000)
 
 BASELINE_CONFIG: dict[str, Any] = {
-    "agent_count": 3,
-    "actions_per_agent": [8, 8, 8],
+    # every mock agent; 8 actions fits each agent's full run
+    "agent_count": len(AGENT_GENERATORS),
+    "actions_per_agent": [8] * len(AGENT_GENERATORS),
     "variance": "mid",
     "demand_model": "p95",
     "unit_cost": None,
@@ -71,6 +82,14 @@ BASELINE_CONFIG: dict[str, Any] = {
 # chosen to force a "stabilization found" result. A workflow with more
 # naturally-repeating inputs would reach a higher ceiling and could use a
 # stricter min_coverage.
+#
+# That measurement graded only the largest workflow (the CVE agent). With
+# every workflow graded (six agents, 30 + 30 seeds), the shipped defaults
+# make 1 false negative in 30 seeds, Phase 1 picks min_repeated_inputs=10,
+# and mean_coverage only reaches 0.15 (n=500) -> 0.21 (n=2000) -> 0.33
+# (n=10000) -- under 0.375, so no plateau is found. Not lowered to force a
+# result: the honest reading is that six workflows sharing the same line
+# budget need more than 10000 lines, or a looser min_repeated_inputs.
 DEFAULT_PLATEAU_CRITERIA: dict[str, float] = {
     "min_accuracy": 0.95,
     "min_recall": 0.90,
@@ -85,11 +104,11 @@ def _dataset(total_lines: int, seed: int, config: dict | None = None) -> tuple[l
     return generate_dataset_for_config(cfg, seed)
 
 
-def _selected_workflow(events: list[TraceEvent]) -> str:
+def _workflows(events: list[TraceEvent]) -> list[str]:
     observed = observe(events)
     if not observed["workflows"]:
         raise ValueError("generated dataset has no workflow")
-    return observed["workflows"][0]["name"]
+    return [w["name"] for w in observed["workflows"]]
 
 
 def _mean(values: list[float | None]) -> float | None:
@@ -154,12 +173,11 @@ def calibrate_multi_seed(
     leaderboard; nothing here applies the result to ``determinism.py``.
     """
     datasets = [_dataset(sample_size, seed, config) for seed in seeds]
-    workflows = [_selected_workflow(events) for events, _ in datasets]
 
     def _evaluate_grid(min_inputs: int, min_coverage: float, min_observations: int) -> dict:
         reports = [
-            _evaluate(events, wf, manifest["ground_truth"], min_inputs, min_coverage, min_observations).report
-            for (events, manifest), wf in zip(datasets, workflows)
+            _evaluate(events, None, manifest["ground_truth"], min_inputs, min_coverage, min_observations).report
+            for events, manifest in datasets
         ]
         agg = _aggregate_reports(reports)
         agg.update(
@@ -223,10 +241,9 @@ def sample_size_experiment(
         reports = []
         for seed in seeds:
             events, manifest = _dataset(size, seed, config)
-            wf = _selected_workflow(events)
             candidate = _evaluate(
                 events,
-                wf,
+                None,
                 manifest["ground_truth"],
                 th["min_repeated_inputs"],
                 th["min_repeat_coverage"],
@@ -295,10 +312,11 @@ def detect_stabilization_point(curve: list[dict], *, criteria: dict | None = Non
 # Phase 3: recommendation stability across independent datasets
 # --------------------------------------------------------------------- #
 
-def _ranked_items(events: list[TraceEvent], workflow: str) -> list[str]:
-    """``"agent/node"`` items ordered worst-scoring (highest-priority)
-    first, reusing ``mine.py``'s own ``recommend()`` ranking as-is."""
-    stats = score(mine(events, workflow, with_fingerprints=False))
+def _ranked_items(events: list[TraceEvent]) -> list[str]:
+    """``"agent/node"`` items across all workflows, ordered worst-scoring
+    (highest-priority) first, reusing ``mine.py``'s own ``recommend()``
+    ranking as-is."""
+    stats = score([s for wf in _workflows(events) for s in mine(events, wf, with_fingerprints=False)])
     return [f"{r['agent']}/{r['node']}" for r in recommend(stats)]
 
 
@@ -314,8 +332,7 @@ def recommendation_stability(
     rankings = []
     for seed in seeds:
         events, _ = _dataset(sample_size, seed, config)
-        wf = _selected_workflow(events)
-        rankings.append(_ranked_items(events, wf))
+        rankings.append(_ranked_items(events))
 
     top1s = [r[0] for r in rankings if r]
     if top1s:
@@ -413,8 +430,7 @@ def modeled_cost_savings(
     config: dict | None = None,
 ) -> dict:
     events, _ = _dataset(sample_size, seed, config)
-    wf = _selected_workflow(events)
-    stats = mine(events, wf, with_fingerprints=False)
+    stats = [s for wf in _workflows(events) for s in mine(events, wf, with_fingerprints=False)]
 
     per_node = []
     total_before = 0.0
@@ -460,6 +476,135 @@ def modeled_cost_savings(
 
 
 # --------------------------------------------------------------------- #
+# Phase 6: expected vs. found. Each mock agent plants specific findings
+# (a cacheable lookup, a rule-like LLM choice, a scripted chain, hidden
+# state) and some traps the report should NOT flag. This compares that
+# plan with the report's own opportunity list and per-node determinism.
+# The generator is synthetic, so a match doesn't prove the profiler works
+# on real agents -- but every miss or false alarm is a concrete case to
+# look at.
+# --------------------------------------------------------------------- #
+
+def _matches(expected: dict, found: dict) -> bool:
+    if found["type"] != expected["type"]:
+        return False
+    if "steps" in expected:
+        steps, want = found["title"].split(" → "), expected["steps"]
+        return any(steps[i : i + len(want)] == want for i in range(len(steps) - len(want) + 1))
+    return found["title"] == expected["node"]
+
+
+def _compare_workflow(events: list[TraceEvent], workflow: str, ground_truth: dict) -> dict:
+    stats = mine(events, workflow)
+    found = find_opportunities(events, workflow, find_repetition(events, workflow), stats)
+    rows, matched = [], set()
+    for exp in EXPECTED_FINDINGS.get(workflow, []):
+        hits = [i for i, o in enumerate(found) if _matches(exp, o)]
+        matched.update(hits)
+        first = found[hits[0]] if hits else None
+        rows.append(
+            {
+                "workflow": workflow,
+                "type": exp["type"],
+                "target": " → ".join(exp["steps"]) if "steps" in exp else exp["node"],
+                "expected": exp["expect"],
+                "found": bool(hits),
+                "agrees": bool(hits) == exp["expect"],
+                "why": exp["why"],
+                "evidence": first["evidence"] if first else None,
+                "saving": first["saving"] if first else None,
+            }
+        )
+    unplanned: dict[tuple[str, str], dict] = {}
+    for i, o in enumerate(found):
+        # padding copies (``<node>_followup_N``) aren't part of any agent's design
+        if i in matched or "_followup_" in o["title"]:
+            continue
+        entry = unplanned.setdefault(
+            (o["type"], o["title"]),
+            {"workflow": workflow, "type": o["type"], "target": o["title"], "count": 0, "saving": 0.0, "evidence": o["evidence"]},
+        )
+        entry["count"] += 1
+        entry["saving"] += o["saving"] or 0.0
+    predictions = {f"{s.agent}/{s.node}": s.classification for s in stats}
+    determinism = [
+        {**row, "workflow": workflow}
+        for row in validate(predictions, ground_truth).per_node
+        if "_followup_" not in row["node"]
+    ]
+    return {"rows": rows, "unplanned": list(unplanned.values()), "determinism": determinism}
+
+
+def _planted_found(rows: list[dict]) -> tuple[int, int]:
+    planted = [r for r in rows if r["expected"]]
+    return sum(1 for r in planted if r["found"]), len(planted)
+
+
+def expected_vs_found(
+    *,
+    sample_size: int,
+    seed: int,
+    sample_sizes: tuple[int, ...] = (),
+    config: dict | None = None,
+) -> dict:
+    """Planted findings vs. the report's findings, per workflow, at
+    ``sample_size`` -- plus how many planted findings show up at each of
+    ``sample_sizes``, since most need repeated inputs to appear."""
+    events, manifest = _dataset(sample_size, seed, config)
+    rows, unplanned, determinism = [], [], []
+    for wf in sorted(_workflows(events)):
+        result = _compare_workflow(events, wf, manifest["ground_truth"])
+        rows += result["rows"]
+        unplanned += result["unplanned"]
+        determinism += result["determinism"]
+    unplanned.sort(key=lambda u: (u["workflow"], -u["saving"], u["target"]))
+
+    by_size = []
+    for size in sample_sizes:
+        size_events, size_manifest = _dataset(size, seed, config)
+        size_rows = [
+            r for wf in _workflows(size_events) for r in _compare_workflow(size_events, wf, size_manifest["ground_truth"])["rows"]
+        ]
+        hit, total = _planted_found(size_rows)
+        by_size.append(
+            {
+                "sample_size": size,
+                "planted_found": hit,
+                "planted_total": total,
+                "false_alarms": sum(1 for r in size_rows if not r["expected"] and r["found"]),
+            }
+        )
+
+    hit, total = _planted_found(rows)
+    traps = [r for r in rows if not r["expected"]]
+    return {
+        "sample_size": sample_size,
+        "seed": seed,
+        "summary": {
+            "planted_found": hit,
+            "planted_total": total,
+            "false_alarms": sum(1 for r in traps if r["found"]),
+            "traps": len(traps),
+            "unplanned": len(unplanned),
+            "determinism_agree": sum(1 for d in determinism if d["truth"] == d["predicted"]),
+            "determinism_insufficient": sum(1 for d in determinism if d["outcome"] == "insufficient_evidence"),
+            "determinism_nodes": len(determinism),
+        },
+        "rows": rows,
+        "unplanned": unplanned,
+        "determinism": determinism,
+        "by_sample_size": by_size,
+        "note": (
+            "Expected = what each mock agent's generator was written to contain (see "
+            "rawdata_gen/ground_truth.py). Found = the opportunities the report lists for the same data. "
+            "'Not expected' rows are traps: the report should not flag them. 'Found, not planted' are "
+            "findings nobody planted -- often real (two runs that happened to share an input), sometimes "
+            "a sign the profiler flags something it shouldn't (e.g. caching a call that writes)."
+        ),
+    }
+
+
+# --------------------------------------------------------------------- #
 # Full orchestration
 # --------------------------------------------------------------------- #
 
@@ -498,6 +643,9 @@ def run_poc(
     recommendation = recommendation_stability(sample_size=eval_size, seeds=validation_seeds, config=config)
     bpop = bpop_poc_evaluation(sample_size=eval_size, seed=validation_seeds[0], config=config)
     cost = modeled_cost_savings(sample_size=eval_size, seed=validation_seeds[0], config=config)
+    comparison = expected_vs_found(
+        sample_size=eval_size, seed=validation_seeds[0], sample_sizes=sample_sizes, config=config
+    )
 
     best = calibration["selected"]
     hypothesis_supported = (
@@ -513,10 +661,12 @@ def run_poc(
         "phase3_recommendation_stability": recommendation,
         "phase4_bpop_evaluation": bpop,
         "phase5_modeled_cost": cost,
+        "phase6_expected_vs_found": comparison,
         "conclusion": "SUPPORTED" if hypothesis_supported else "NOT YET SUPPORTED",
         "conclusion_reason": (
             f"stabilization_point={plateau['stabilization_point']}, "
             f"top1_stability={recommendation['top1_stability']}, "
-            f"selected_mean_accuracy={best['mean_accuracy']}"
+            f"selected_mean_accuracy={best['mean_accuracy']}, "
+            f"planted_findings_found={comparison['summary']['planted_found']}/{comparison['summary']['planted_total']}"
         ),
     }

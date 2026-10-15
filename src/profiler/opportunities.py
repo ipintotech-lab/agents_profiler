@@ -8,6 +8,8 @@ the cost of the observed calls that would not have run, not a forecast.
 """
 from __future__ import annotations
 
+import re
+
 from ingest.trace_schema import TraceEvent
 
 from .mine import ActionStats
@@ -15,10 +17,22 @@ from .mine import ActionStats
 MAX_PER_TYPE = 5
 MIN_BYPASS_OBSERVATIONS = 3
 
+# A call that changes something (writes a ticket, sends a message, edits a
+# file) can return the same output for the same input every time and still
+# not be safe to cache: skipping the repeat skips the change. Traces don't
+# say which calls have side effects, so this goes by the operation's name.
+# These words mark a write wherever they appear in the name...
+WRITE_WORDS = frozenset({
+    "create", "update", "upsert", "delete", "remove", "insert", "write", "edit", "replace", "send", "post",
+    "publish", "submit", "patch", "put", "merge", "commit", "push", "deploy", "rollback", "rerun",
+})
+# ...and these only as the first word ("log_activity" writes, "fetch_error_log" doesn't).
+WRITE_VERBS = frozenset({"log", "page", "notify", "trigger", "schedule", "apply", "pause", "cancel", "close", "book"})
+
 # Plain-language meaning of each optimization type, shown next to the name.
 OPTIMIZATION_TYPES = {
     "EXTRACT_DETERMINISTIC_SUBSTEP": "The same steps run in the same order again and again. Turning them into one script removes the LLM calls that pick each next step.",
-    "CACHE_RESULT": "The same operation ran with the identical input and gave the same output every time. Reusing the first result skips the repeats.",
+    "CACHE_RESULT": "The same operation ran with the identical input and gave the same output every time. Reusing the first result skips the repeats. Operations whose name says they change something (create, update, send, edit...) are never suggested.",
     "CONDITIONAL_LLM_BYPASS": "An LLM call made the same choice every time it saw the same starting point and input. A rule could make that choice without calling the model.",
     "REVIEW_HIDDEN_STATE": "The same request gave different results even with identical context and configuration, so something the traces don't record is changing the outcome.",
 }
@@ -50,7 +64,26 @@ def _sequence_opportunities(sequences: list[dict]) -> list[dict]:
     ]
 
 
-def _cache_opportunities(calls: list[dict]) -> list[dict]:
+def _words(name: str) -> list[list[str]]:
+    """Words of each part of a name: ``"mcp__jira__createIssue"`` ->
+    ``[["mcp"], ["jira"], ["create", "issue"]]``."""
+    parts = re.split(r"[.:/]|__", name)
+    return [
+        [w.lower() for w in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", part)]
+        for part in parts
+        if part
+    ]
+
+
+def has_side_effect(name: str) -> bool:
+    """Whether an operation's name says it changes something."""
+    return any(
+        any(w in WRITE_WORDS for w in words) or (words and words[0] in WRITE_VERBS)
+        for words in _words(name)
+    )
+
+
+def _cache_opportunities(calls: list[dict], names: dict[str, set[str]]) -> list[dict]:
     return [
         {
             "type": "CACHE_RESULT",
@@ -63,6 +96,7 @@ def _cache_opportunities(calls: list[dict]) -> list[dict]:
         }
         for c in calls
         if c["redundant_calls"] > 0
+        and not any(has_side_effect(n) for n in names.get(c["node"], set()) | {c["node"]})
     ]
 
 
@@ -104,15 +138,29 @@ def _fingerprint_opportunities(stats: list[ActionStats], llm_nodes: set[tuple[st
     return found
 
 
-def build_summary(events: list[TraceEvent], workflow: str, repetition: dict, stats: list[ActionStats]) -> dict:
+def find_opportunities(
+    events: list[TraceEvent], workflow: str, repetition: dict, stats: list[ActionStats]
+) -> list[dict]:
+    """Every opportunity found, largest saving first (the summary shows only
+    a few of each type)."""
     relevant = [e for e in events if e.workflow == workflow]
     llm_nodes = {(e.agent, e.node) for e in relevant if e.model}
+    tool_names: dict[str, set[str]] = {}
+    for e in relevant:
+        if e.tool is not None:
+            tool_names.setdefault(e.node, set()).add(e.tool.name)
     opportunities = (
         _sequence_opportunities(repetition["sequences"])
-        + _cache_opportunities(repetition["calls"])
+        + _cache_opportunities(repetition["calls"], tool_names)
         + _fingerprint_opportunities(stats, llm_nodes)
     )
     opportunities.sort(key=lambda o: (o["saving"] is None, -(o["saving"] or 0), -o["observed_cost"]))
+    return opportunities
+
+
+def build_summary(events: list[TraceEvent], workflow: str, repetition: dict, stats: list[ActionStats]) -> dict:
+    relevant = [e for e in events if e.workflow == workflow]
+    opportunities = find_opportunities(events, workflow, repetition, stats)
     # A few of each type, so one kind of finding can't fill the list.
     per_type: dict[str, int] = {}
     shown = []

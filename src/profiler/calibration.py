@@ -68,20 +68,26 @@ def _rank_key(candidate: ThresholdCandidate) -> tuple:
 
 def _evaluate(
     events: list[TraceEvent],
-    workflow: str,
+    workflow: str | None,
     ground_truth: dict[str, dict],
     min_repeated_inputs: int,
     min_repeat_coverage: float,
     min_repeated_observations: int,
 ) -> ThresholdCandidate:
-    stats = mine(
-        events,
-        workflow,
-        min_repeated_inputs=min_repeated_inputs,
-        min_repeat_coverage=min_repeat_coverage,
-        min_repeated_observations=min_repeated_observations,
-        with_fingerprints=False,
-    )
+    # workflow=None grades every workflow in the data together
+    workflows = [workflow] if workflow is not None else sorted({e.workflow for e in events})
+    stats = [
+        s
+        for wf in workflows
+        for s in mine(
+            events,
+            wf,
+            min_repeated_inputs=min_repeated_inputs,
+            min_repeat_coverage=min_repeat_coverage,
+            min_repeated_observations=min_repeated_observations,
+            with_fingerprints=False,
+        )
+    ]
     predictions = {f"{s.agent}/{s.node}": s.classification for s in stats}
     report = validate(predictions, ground_truth)
     return ThresholdCandidate(

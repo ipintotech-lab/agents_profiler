@@ -32,8 +32,8 @@ from .pipeline import run_pipeline
 TOTAL_LINES_STEPS = (1000, 2500, 5000, 10000)
 
 _BASELINE = {
-    "agent_count": 3,
-    "actions_per_agent": [8, 8, 8],
+    "agent_count": len(AGENT_GENERATORS),
+    "actions_per_agent": [8] * len(AGENT_GENERATORS),
     "variance": "mid",
     "total_lines": 2000,
     "demand_model": "p95",

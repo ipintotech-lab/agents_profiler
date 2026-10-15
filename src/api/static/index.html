@@ -52,6 +52,7 @@
   button.ghost { background: transparent; border: 1px solid var(--line); color: var(--dim); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   .hint { color: var(--faint); font-size: 11px; margin-top: 2px; }
+  label .hint { text-transform: none; letter-spacing: 0; line-height: 1.45; margin-top: 4px; }
   .err { border-left: 2px solid var(--red); background: rgba(248,113,113,.06); color: var(--red); padding: 10px 14px; border-radius: 0 3px 3px 0; margin: 14px 0; font-size: 12.5px; display:none; }
 
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); margin: 16px 0; }
@@ -132,6 +133,20 @@
   details.glossary dt { color: var(--ink); }
   details.glossary dd { color: var(--dim); }
   details.glossary dd code { word-break: break-all; }
+  .checks { display: flex; gap: 14px; padding: 8px 0; }
+  label.check { text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--dim); display: inline-flex; gap: 6px; align-items: center; }
+  .dq { border: 1px solid var(--amber); border-left-width: 3px; border-radius: 4px; padding: 12px 16px; margin: 0 0 22px; background: var(--panel); font-size: 13px; color: var(--dim); }
+  .dq.estimated { border-color: var(--cyan); }
+  .dq h3 { margin: 0 0 6px; font-size: 13.5px; color: var(--ink); font-weight: 600; }
+  .dq ul { margin: 6px 0; padding-left: 18px; line-height: 1.6; }
+  .dq b { color: var(--ink); font-weight: 500; }
+  .dq .cov { color: var(--faint); font-size: 11.5px; }
+  .dq .estimate { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 10px; }
+  .dq .estimate input { width: 110px; }
+  .verdict-ok { color: var(--lime); }
+  .verdict-miss { color: var(--amber); }
+  details.poc-more { margin: 10px 0; }
+  details.poc-more > summary { cursor: pointer; color: var(--dim); font-size: 13px; }
   details.hf-guide { border: 1px solid var(--line); border-left: 2px solid var(--lime); border-radius: 4px; padding: 10px 16px; margin: 0 0 14px; background: var(--panel); font-size: 12.5px; color: var(--dim); }
   details.hf-guide > summary { cursor: pointer; color: var(--ink); font-size: 13px; }
   details.hf-guide ol { margin: 10px 0 8px; padding-left: 20px; line-height: 1.6; }
@@ -139,6 +154,8 @@
   details.hf-guide b { color: var(--ink); font-weight: 500; }
   details.hf-guide code { word-break: break-all; }
   details.hf-guide a { color: var(--lime); }
+  details.hf-guide .hf-cli { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+  details.hf-guide .hf-cli pre.code { margin: 6px 0; white-space: pre-wrap; word-break: break-all; }
   details.hf-guide li.flag { outline: 1px solid var(--lime); outline-offset: 3px; border-radius: 2px; }
   .hf-examples { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 4px; }
   .hf-examples button { padding: 2px 10px; font-size: 12px; }
@@ -217,6 +234,12 @@
           <li><b>Click "Run pipeline"</b> at the bottom.</li>
         </ol>
         <div class="hint"><b>HTTP 401</b> &mdash; no token given (step 4). <b>HTTP 403</b> &mdash; the token has no access yet: the request is pending, was made from another account, or a fine-grained token lacks the gated-repos permission.</div>
+        <div class="hf-cli"><b>From the command line</b> &mdash; install the Hugging Face tools and log in once:
+<pre class="code">python -m pip install datasets huggingface_hub
+hf auth login</pre>
+          <code>hf auth login</code> asks for the token from step 4 and saves it, so you don't need to paste it again. Both this app (when you run it on your own machine) and the converter use the saved token. To convert a dataset to a trace file:
+<pre class="code">python -m ingest.convert https://huggingface.co/datasets/cx-cmu/agent_trajectories --hf-file swebench.jsonl --limit 10 -o traces.jsonl</pre>
+        </div>
       </details>
       <div class="row">
         <div class="field grow">
@@ -248,11 +271,45 @@
     <div id="generatePanel" hidden>
       <div class="genrow">
         <div class="field">
-          <label for="agentCount">Agents <span class="hint">1–3</span></label>
+          <label for="genFormat">Format <span class="hint">what kind of trace data</span></label>
+          <select id="genFormat">
+            <option value="events" selected>Agent trace events (3 mock agents)</option>
+            <option value="claude_code">Claude Code sessions</option>
+          </select>
+        </div>
+      </div>
+      <div class="genrow" id="ccFields" hidden>
+        <div class="field">
+          <label for="ccSessions">Sessions <span class="hint">1–50</span></label>
+          <input type="number" id="ccSessions" min="1" max="50" value="5">
+        </div>
+        <div class="field">
+          <label for="ccPrompts">Requests per session <span class="hint">1–10</span></label>
+          <input type="number" id="ccPrompts" min="1" max="10" value="3">
+        </div>
+        <div class="field grow">
+          <label>Leave out <span class="hint">imitate an incomplete export</span></label>
+          <div class="checks">
+            <label class="check"><input type="checkbox" class="ccOmit" value="tokens"> tokens</label>
+            <label class="check"><input type="checkbox" class="ccOmit" value="cost"> cost</label>
+            <label class="check"><input type="checkbox" class="ccOmit" value="timing"> timing</label>
+          </div>
+        </div>
+        <div class="field">
+          <label for="ccSeed">Seed <span class="hint">optional</span></label>
+          <input type="number" id="ccSeed" step="1" placeholder="random">
+        </div>
+      </div>
+      <div class="genrow" id="eventFields">
+        <div class="field">
+          <label for="agentCount">Agents <span class="hint">1–6</span></label>
           <select id="agentCount">
             <option value="1">1</option>
             <option value="2">2</option>
             <option value="3" selected>3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
           </select>
         </div>
         <div class="field">
@@ -266,6 +323,18 @@
         <div class="field" id="actions3Field">
           <label for="actions3">Actions — release-agent <span class="hint">4–20</span></label>
           <input type="number" id="actions3" min="4" max="20" value="5">
+        </div>
+        <div class="field" id="actions4Field">
+          <label for="actions4">Actions — code-review-agent <span class="hint">4–20</span></label>
+          <input type="number" id="actions4" min="4" max="20" value="8">
+        </div>
+        <div class="field" id="actions5Field">
+          <label for="actions5">Actions — data-pipeline-agent <span class="hint">4–20</span></label>
+          <input type="number" id="actions5" min="4" max="20" value="8">
+        </div>
+        <div class="field" id="actions6Field">
+          <label for="actions6">Actions — sales-agent <span class="hint">4–20</span></label>
+          <input type="number" id="actions6" min="4" max="20" value="8">
         </div>
         <div class="field">
           <label for="totalLines">Total lines <span class="hint">optional, multiple of 20</span></label>
@@ -284,6 +353,7 @@
           <input type="number" id="seed" step="1" placeholder="random">
         </div>
       </div>
+      <div class="hint" id="ccHint" hidden>Sessions in the format Claude Code writes under <code>~/.claude/projects/</code>: requests worked through with git, Grep, Read, Edit and pytest, with tokens, timing and cost. Leave attributes out to see how the report flags missing data.</div>
       <div class="row" style="margin-bottom:0">
         <button type="button" class="ghost" id="generateBtn">Generate data</button>
         <button type="button" class="ghost" id="downloadBtn" disabled>Download JSON</button>
@@ -310,15 +380,15 @@
     <div id="pocPanel" hidden>
       <div class="genrow">
         <div class="field">
-          <label for="pocCalSeeds">Calibration seeds <span class="hint">how many independent datasets vote on the best determinism thresholds — more seeds = a more trustworthy pick, but a slower run</span></label>
+          <label for="pocCalSeeds">Calibration seeds <span class="hint">The app decides "always gives the same answer" using a few cut-offs (e.g. "an input must repeat at least 3 times before we judge it"). To pick those cut-offs, it makes this many separate sample datasets, tries every combination on each, and keeps the one that is right most often. More datasets: a safer pick, but a slower run.</span></label>
           <input type="number" id="pocCalSeeds" min="1" step="1" value="5">
         </div>
         <div class="field">
-          <label for="pocValSeeds">Validation seeds <span class="hint">how many independent datasets the frozen thresholds are then tested on — always a disjoint seed range from calibration, so the thresholds are never graded on data they were picked from</span></label>
+          <label for="pocValSeeds">Validation seeds <span class="hint">After the cut-offs are picked, they are tested on this many new datasets the picking never saw, like checking a student on questions that weren't in the practice exam. More datasets: a more reliable grade, but a slower run.</span></label>
           <input type="number" id="pocValSeeds" min="1" step="1" value="5">
         </div>
         <div class="field">
-          <label for="pocCalSampleSize">Calibration sample size <span class="hint">trace lines generated per calibration seed when picking the thresholds</span></label>
+          <label for="pocCalSampleSize">Calibration sample size <span class="hint">How many trace lines each picking dataset has. Bigger datasets repeat inputs more often, so the app can judge more steps.</span></label>
           <input type="number" id="pocCalSampleSize" min="20" step="20" value="2000">
         </div>
       </div>
@@ -362,6 +432,7 @@
 
   <div id="report">
 
+    <div class="dq" id="dataNotice" hidden></div>
     <h2><span class="idx">01</span>Summary <span style="font-size:12px;color:var(--faint)">— where the money goes and what to change</span></h2>
     <div class="stats" id="summaryStats"></div>
     <p class="takeaway" id="summaryTakeaway"></p>
@@ -450,7 +521,7 @@
 
   <div id="sweepReport" style="display:none">
     <h2><span class="idx">S</span>Run tests <span style="font-size:12px;color:var(--faint)">— sweep across agent count, variance, demand_model, total_lines (1k&ndash;10k), and formula overrides</span></h2>
-    <p class="lede">Generates a fresh synthetic dataset per case, holding every other dimension at a fixed baseline, and runs it through the full pipeline — a regression/stress test of the pipeline itself, not something to tune by hand. Current shipped determinism thresholds are min_repeated_inputs=3, min_repeat_coverage=0.1, min_repeated_observations=10 — the POC tab's Phase 1 calibration measured (3, 0.1, 20) outperforming these on false negatives across 30 seeds, but that change hasn't been applied here; see the POC tab for the measured comparison before tuning thresholds by hand.</p>
+    <p class="lede">Generates a fresh synthetic dataset per case, holding every other dimension at a fixed baseline, and runs it through the full pipeline — a regression/stress test of the pipeline itself, not something to tune by hand. Current shipped determinism thresholds are min_repeated_inputs=3, min_repeat_coverage=0.1, min_repeated_observations=10 — with all six agents graded, the POC tab's Phase 1 calibration found these make 1 false negative in 30 seeds and picked (10, 0.1, 10) instead, at the cost of classifying about half as many nodes; that change hasn't been applied here; see the POC tab for the measured comparison before tuning thresholds by hand.</p>
     <div class="stats" id="sweepStats"></div>
     <table id="sweepTable"><thead><tr><th>Group</th><th>Case</th><th>Status</th><th class="num">events</th><th class="num">elapsed (ms)</th><th class="num">x*</th><th class="num">y*</th><th class="num">accuracy</th><th>error</th></tr></thead><tbody></tbody></table>
   </div>
@@ -458,8 +529,21 @@
   <div id="pocReport" style="display:none">
     <h2><span class="idx">P</span>POC <span style="font-size:12px;color:var(--faint)">— sample-size stabilization experiment</span></h2>
     <p class="lede">This answers one question: <strong>how much synthetic trace data does the profiler actually need before its determinism calls stop changing?</strong> It is not looking for the sample size with the highest accuracy — it is looking for the <em>smallest</em> sample size beyond which feeding it more data stops meaningfully improving the result. Below that point, trust the numbers less; above it, more data is just cost with no added benefit.</p>
-    <p class="lede">How it gets there, phase by phase: <strong>(1)</strong> pick the best determinism thresholds by voting across several independent "calibration" datasets; <strong>(2)</strong> freeze those thresholds and re-run the profiler at increasing sample sizes on a completely separate set of "validation" datasets, watching where accuracy/recall/coverage level off; <strong>(3)</strong> check that the profiler's worst-offender recommendation is stable at that sample size, not a coin flip between seeds; <strong>(4)</strong> sanity-check the resulting B-POP capacity recommendation against the same workload; <strong>(5)</strong> model what the measured determinism rate would be worth in avoided LLM calls. Calibration and validation always use non-overlapping seeds, so the thresholds are never graded on the same data they were chosen from.</p>
+    <p class="lede">How it gets there, phase by phase: <strong>(1)</strong> pick the best determinism thresholds by voting across several independent "calibration" datasets; <strong>(2)</strong> freeze those thresholds and re-run the profiler at increasing sample sizes on a completely separate set of "validation" datasets, watching where accuracy/recall/coverage level off; <strong>(3)</strong> check that the profiler's worst-offender recommendation is stable at that sample size, not a coin flip between seeds; <strong>(4)</strong> sanity-check the resulting B-POP capacity recommendation against the same workload; <strong>(5)</strong> model what the measured determinism rate would be worth in avoided LLM calls; <strong>(6)</strong> compare what each of the six mock agents was built to contain with what the report actually found. Every phase grades all six agents' workflows. Calibration and validation always use non-overlapping seeds, so the thresholds are never graded on the same data they were chosen from.</p>
     <div class="stats" id="pocConclusionStats"></div>
+
+    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 6 — expected vs. found</h3>
+    <p class="lede">Each mock agent was written to contain specific things: a lookup that always returns the same answer (cache it), an LLM choice that a rule could make, a fixed chain of steps an LLM planner walks through, an LLM step that varies for the same input (hidden state), and traps the report should <em>not</em> flag. This table puts that plan next to what the report found on the same data. They won't match exactly — synthetic agents are simpler than real ones — but every miss and every false alarm is a concrete case to look at.</p>
+    <div class="stats explained" id="pocExpectedStats"></div>
+    <table id="pocExpectedTable"><thead><tr><th>agent workflow</th><th>what</th><th>where</th><th>expected</th><th>found</th><th>why it was planted / evidence</th></tr></thead><tbody></tbody></table>
+    <details class="poc-more"><summary>Found but not planted <span class="hint" id="pocUnplannedCount"></span></summary>
+      <table id="pocUnplannedTable"><thead><tr><th>agent workflow</th><th>what</th><th>where</th><th class="num">times</th><th class="num">saving</th><th>evidence</th></tr></thead><tbody></tbody></table>
+    </details>
+    <details class="poc-more"><summary>Determinism per node: expected vs. classified</summary>
+      <table id="pocDeterminismTable"><thead><tr><th>node</th><th class="num">planted rate</th><th>expected</th><th>classified</th><th>outcome</th></tr></thead><tbody></tbody></table>
+    </details>
+    <table id="pocExpectedCurve" style="margin-top:12px"><thead><tr><th class="num">sample size</th><th class="num">planted findings found</th><th class="num">false alarms</th></tr></thead><tbody></tbody></table>
+    <pre class="code" id="pocExpectedNote"></pre>
 
     <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Phase 1 — calibration</h3>
     <p class="lede">Grid-searches the three determinism thresholds (<code>min_repeated_inputs</code>, <code>min_repeat_coverage</code>, <code>min_repeated_observations</code>) across every calibration seed together, and compares the best-scoring combination against the thresholds this app currently ships with. "Selected" is what Phase 2 onward actually uses — not automatically applied to the live defaults.</p>
@@ -638,17 +722,29 @@ tabPOC.addEventListener('click', () => setMode('poc'));
 
 function updateAgentFields() {
   const n = parseInt(agentCountEl.value, 10);
-  document.getElementById('actions2Field').hidden = n < 2;
-  document.getElementById('actions3Field').hidden = n < 3;
+  for (let i = 2; i <= 6; i++) document.getElementById(`actions${i}Field`).hidden = n < i;
 }
 agentCountEl.addEventListener('change', updateAgentFields);
 updateAgentFields();
 updateRunBtnState();
 
+const genFormatEl = document.getElementById('genFormat');
+function updateGenFormat() {
+  const cc = genFormatEl.value === 'claude_code';
+  document.getElementById('ccFields').hidden = !cc;
+  document.getElementById('ccHint').hidden = !cc;
+  document.getElementById('eventFields').hidden = cc;
+  // seed checks and ground truth exist only for the mock agents' events
+  document.getElementById('validateSeedRangeBtn').hidden = cc;
+  validateSeedBtn.hidden = cc;
+}
+genFormatEl.addEventListener('change', updateGenFormat);
+
 document.getElementById('generateBtn').addEventListener('click', async () => {
   errEl.style.display = 'none';
+  if (genFormatEl.value === 'claude_code') { generateClaudeCode(); return; }
   const agentCount = parseInt(agentCountEl.value, 10);
-  const actionsPerAgent = [1, 2, 3].slice(0, agentCount).map(i => parseInt(document.getElementById(`actions${i}`).value, 10));
+  const actionsPerAgent = [1, 2, 3, 4, 5, 6].slice(0, agentCount).map(i => parseInt(document.getElementById(`actions${i}`).value, 10));
   const totalLinesRaw = document.getElementById('totalLines').value;
   const variance = document.getElementById('variance').value;
   const seedRaw = document.getElementById('seed').value;
@@ -682,8 +778,42 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
   }
 });
 
+async function generateClaudeCode() {
+  const body = {
+    format: 'claude_code',
+    sessions: parseInt(document.getElementById('ccSessions').value, 10),
+    prompts_per_session: parseInt(document.getElementById('ccPrompts').value, 10),
+    omit: [...document.querySelectorAll('.ccOmit:checked')].map(c => c.value),
+  };
+  const seedRaw = document.getElementById('ccSeed').value;
+  if (seedRaw !== '') body.seed = parseInt(seedRaw, 10);
+  const genBtn = document.getElementById('generateBtn');
+  genBtn.disabled = true;
+  genBtn.textContent = 'Generating…';
+  try {
+    const res = await fetch('/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Generation failed.');
+    generatedBlob = new Blob([data.jsonl], { type: 'application/x-ndjson' });
+    generatedSummary = data;
+    const left = data.omitted.length ? ` Left out: ${data.omitted.map(esc).join(', ')}.` : '';
+    genSummaryEl.innerHTML = `<span class="ok">Generated ${data.num_sessions} Claude Code sessions with ${data.num_runs} requests (${data.num_events} transcript records).</span>${left} ` +
+      `Ready to run the pipeline. <span class="hint">seed=${data.seed}</span>`;
+    downloadBtn.disabled = false;
+  } catch (e) {
+    generatedBlob = null;
+    downloadBtn.disabled = true;
+    showErr(e.message || String(e));
+  } finally {
+    genBtn.disabled = false;
+    genBtn.textContent = 'Generate data';
+    updateRunBtnState();
+  }
+}
+
 const validateSeedBtn = document.getElementById('validateSeedBtn');
 const validateSummaryEl = document.getElementById('validateSummary');
+updateGenFormat();  // the browser may restore the select on reload
 validateSeedBtn.addEventListener('click', async () => {
   if (!generatedSummary) return;
   errEl.style.display = 'none';
@@ -700,7 +830,7 @@ validateSeedBtn.addEventListener('click', async () => {
     // apples-to-apples reproducibility check, not a reshaped comparison.
     const agentCount = parseInt(agentCountEl.value, 10);
     body.agent_count = agentCount;
-    body.actions_per_agent = [1, 2, 3].slice(0, agentCount).map(i => parseInt(document.getElementById(`actions${i}`).value, 10));
+    body.actions_per_agent = [1, 2, 3, 4, 5, 6].slice(0, agentCount).map(i => parseInt(document.getElementById(`actions${i}`).value, 10));
     const totalLinesRaw = document.getElementById('totalLines').value;
     if (totalLinesRaw !== '') body.total_lines = parseInt(totalLinesRaw, 10);
     body.variance = document.getElementById('variance').value;
@@ -730,7 +860,7 @@ validateSeedRangeBtn.addEventListener('click', async () => {
     const agentCount = parseInt(agentCountEl.value, 10);
     const body = {
       agent_count: agentCount,
-      actions_per_agent: [1, 2, 3].slice(0, agentCount).map(i => parseInt(document.getElementById(`actions${i}`).value, 10)),
+      actions_per_agent: [1, 2, 3, 4, 5, 6].slice(0, agentCount).map(i => parseInt(document.getElementById(`actions${i}`).value, 10)),
       variance: document.getElementById('variance').value,
     };
     const totalLinesRaw = document.getElementById('totalLines').value;
@@ -754,6 +884,18 @@ validateSeedRangeBtn.addEventListener('click', async () => {
 const downloadBtn = document.getElementById('downloadBtn');
 downloadBtn.addEventListener('click', () => {
   if (!generatedSummary) return;
+  if (generatedSummary.format === 'claude_code') {
+    // a transcript stays JSON Lines, like the files Claude Code writes
+    const url = URL.createObjectURL(new Blob([generatedSummary.jsonl + '\n'], { type: 'application/x-ndjson' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `claude-code-sessions-seed${generatedSummary.seed}.jsonl`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return;
+  }
   const events = generatedSummary.jsonl.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
   const blob = new Blob([JSON.stringify(events, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -837,6 +979,62 @@ pocBtn.addEventListener('click', async () => {
   }
 });
 
+const OPPORTUNITY_LABELS = {
+  EXTRACT_DETERMINISTIC_SUBSTEP: 'combine into one scripted step',
+  CACHE_RESULT: 'cache the result',
+  CONDITIONAL_LLM_BYPASS: 'replace the LLM call with a rule',
+  REVIEW_HIDDEN_STATE: 'hidden state',
+};
+
+function renderPocExpected(p6) {
+  const section = ['pocExpectedStats', 'pocExpectedTable', 'pocExpectedCurve', 'pocExpectedNote'].map(id => document.getElementById(id));
+  if (!p6) { section.forEach(el => { el.hidden = true; }); return; }
+  section.forEach(el => { el.hidden = false; });
+  const s = p6.summary;
+  const what = t => `<span title="${esc(t)}">${esc(OPPORTUNITY_LABELS[t] || t)}</span>`;
+  const money = v => v ? `$${v.toFixed(3)}` : '—';
+  document.getElementById('pocExpectedStats').innerHTML =
+    statCardExplained(`${s.planted_found}/${s.planted_total}`, 'planted findings found',
+      `of the opportunities the agents were built to contain, how many the report listed (at ${p6.sample_size} trace lines, seed ${p6.seed}).`) +
+    statCardExplained(`${s.false_alarms}/${s.traps}`, 'false alarms',
+      'traps the report flagged anyway — e.g. "cache" on a call that writes a ticket or sends a message.') +
+    statCardExplained(s.unplanned, 'found, not planted',
+      'other findings nobody planted: often real (runs that happened to share an input), sometimes the profiler over-reaching.') +
+    statCardExplained(`${s.determinism_agree}/${s.determinism_nodes}`, 'determinism calls correct',
+      `nodes classified the way they were built; ${s.determinism_insufficient} more had too few repeated inputs to call either way.`);
+  document.querySelector('#pocExpectedTable tbody').innerHTML = p6.rows.map(r => `
+    <tr>
+      <td>${esc(r.workflow)}</td>
+      <td>${what(r.type)}</td>
+      <td><code>${esc(r.target)}</code></td>
+      <td>${r.expected ? 'yes' : '<b>no</b> (trap)'}</td>
+      <td class="${r.agrees ? 'verdict-ok' : 'verdict-miss'}">${r.found ? 'found' : 'not found'} ${r.agrees ? '✓' : '✗'}</td>
+      <td>${esc(r.why)}${r.evidence ? `<div class="hint">${esc(r.evidence)}</div>` : ''}</td>
+    </tr>`).join('');
+  document.getElementById('pocUnplannedCount').textContent = `(${p6.unplanned.length})`;
+  document.querySelector('#pocUnplannedTable tbody').innerHTML = p6.unplanned.map(u => `
+    <tr>
+      <td>${esc(u.workflow)}</td>
+      <td>${what(u.type)}</td>
+      <td><code>${esc(u.target)}</code></td>
+      <td class="num">${u.count}</td>
+      <td class="num">${money(u.saving)}</td>
+      <td class="hint">${esc(u.evidence)}</td>
+    </tr>`).join('');
+  document.querySelector('#pocDeterminismTable tbody').innerHTML = p6.determinism.map(d => `
+    <tr>
+      <td><code>${esc(d.node)}</code></td>
+      <td class="num">${d.determinism_rate.toFixed(2)}</td>
+      <td>${esc(d.truth)}</td>
+      <td>${esc(d.predicted)}</td>
+      <td class="${d.truth === d.predicted ? 'verdict-ok' : d.outcome === 'insufficient_evidence' ? '' : 'verdict-miss'}">${esc(d.outcome.replace(/_/g, ' '))}</td>
+    </tr>`).join('');
+  document.querySelector('#pocExpectedCurve tbody').innerHTML = p6.by_sample_size.map(r => `
+    <tr><td class="num">${r.sample_size}</td><td class="num">${r.planted_found}/${r.planted_total}</td><td class="num">${r.false_alarms}</td></tr>`).join('');
+  document.getElementById('pocExpectedNote').textContent =
+    `${p6.note}\n\nThe last table reruns the comparison at each sample size (seed ${p6.seed}): most findings need repeated inputs, so they only appear once there is enough data.`;
+}
+
 function renderPoc(data) {
   const p1 = data.phase1_calibration;
   const p2curve = data.phase2_sample_size;
@@ -862,6 +1060,8 @@ function renderPoc(data) {
       p5.estimated_savings_pct != null
         ? `modeled reduction in LLM call cost if every node classified DETERMINISTIC were cached to one call per unique input — a conservative, synthetic estimate, not a measured production number.`
         : '—');
+
+  renderPocExpected(data.phase6_expected_vs_found);
 
   const accBefore1 = p1.current_defaults?.mean_accuracy ?? 0;
   const accAfter1 = p1.selected?.mean_accuracy ?? 0;
@@ -1062,6 +1262,10 @@ form.addEventListener('submit', async (ev) => {
   if (uv !== '') fd.append('unit_value', uv);
   if (ch !== '') fd.append('capacity_headroom', ch);
   if (dm !== '') fd.append('demand_model', dm);
+  if (tokenPrices) {
+    fd.append('price_input_per_mtok', tokenPrices.input);
+    fd.append('price_output_per_mtok', tokenPrices.output);
+  }
 
   try {
     const animatePromise = animateStages();
@@ -1095,6 +1299,8 @@ function statCardExplained(value, label, hint) {
 function render(data) {
   reportEl.style.display = 'block';
   reportEl.dataset.hasRun = '1';
+
+  renderDataNotice(data.data_quality);
 
   // Summary
   renderSummary(data);
@@ -1450,6 +1656,45 @@ function rareNodesBody(rare) {
   const cost = rare.reduce((t, a) => t + a.total_cost, 0);
   return `<tbody><tr class="rare-toggle"><td colspan="6">Show ${rare.length} nodes seen fewer than ${MIN_SHOWN_OCCURRENCES} times (${money(cost)} in total)</td></tr></tbody>
     <tbody class="rare" hidden>${rare.map(nodeRows).join('')}</tbody>`;
+}
+
+// Opt-in cost estimate ($ per 1M input / output tokens), sent with the next runs.
+let tokenPrices = null;
+
+// What the data is missing, before any numbers -- so "$0 saving" doesn't
+// read as "nothing to save" -- with the estimate offered when it can help.
+function renderDataNotice(dq) {
+  const el = document.getElementById('dataNotice');
+  if (!dq || dq.complete) { el.hidden = true; el.innerHTML = ''; return; }
+  const estimated = dq.gaps.some(g => g.status === 'estimated');
+  const missing = dq.gaps.filter(g => g.status !== 'estimated');
+  const pct = g => g.status === 'partial' ? ` <span class="cov">(${Math.round(g.coverage * 100)}% of calls have it)</span>` : '';
+  const item = g => `<li><b>${esc(g.label)}</b> &mdash; ${g.status === 'estimated' ? 'estimated' : g.status === 'partial' ? 'partly missing' : 'missing'}${pct(g)}. ${esc(g.effect)}</li>`;
+  let html = missing.length
+    ? `<h3>This data is missing some of what the report relies on</h3><ul>${missing.map(item).join('')}</ul>` +
+      '<div>Repeats and sequences below are still found; the numbers named above read as 0 or are left out.</div>'
+    : '';
+  if (estimated) html += `<h3>Cost is estimated</h3><ul>${dq.gaps.filter(g => g.status === 'estimated').map(item).join('')}</ul>` +
+    '<button type="button" class="ghost" id="dqClearEstimate">Use recorded cost only</button>';
+  if (dq.can_estimate_cost && !estimated) html += `
+    <div class="estimate">
+      <div class="field"><label for="dqPriceIn">$ / 1M input tokens</label><input type="number" id="dqPriceIn" min="0" step="0.01" value="3"></div>
+      <div class="field"><label for="dqPriceOut">$ / 1M output tokens</label><input type="number" id="dqPriceOut" min="0" step="0.01" value="15"></div>
+      <button type="button" class="ghost" id="dqEstimate">Estimate cost from tokens and re-run</button>
+    </div>
+    <div class="cov">Optional. Uses your model's list price; the report will label the cost as estimated.</div>`;
+  el.innerHTML = html;
+  el.className = 'dq' + (estimated && !missing.length ? ' estimated' : '');
+  el.hidden = false;
+  const rerun = () => form.requestSubmit();
+  document.getElementById('dqEstimate')?.addEventListener('click', () => {
+    const input = parseFloat(document.getElementById('dqPriceIn').value);
+    const output = parseFloat(document.getElementById('dqPriceOut').value);
+    if (!(input >= 0 && output >= 0)) { showErr('Enter both token prices (0 or more).'); return; }
+    tokenPrices = { input, output };
+    rerun();
+  });
+  document.getElementById('dqClearEstimate')?.addEventListener('click', () => { tokenPrices = null; rerun(); });
 }
 
 function renderSummary(data) {

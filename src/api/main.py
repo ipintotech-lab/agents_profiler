@@ -12,7 +12,10 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -38,15 +41,22 @@ from rawdata_gen import (
     verify_seed_reproducibility,
 )
 from rawdata_gen.agents.common import to_jsonl
+from rawdata_gen.claude_code_sessions import generate_sessions
 from rawdata_gen.generate_traces import build_dataset_manifest
 
 
 class GenerateRequest(BaseModel):
-    agent_count: int
-    actions_per_agent: list[int]
+    # "events": the mock agents' trace events; "claude_code": Claude Code
+    # session transcripts (sessions / prompts_per_session / omit apply)
+    format: Literal["events", "claude_code"] = "events"
+    agent_count: int = 3
+    actions_per_agent: list[int] = [5, 5, 5]
     total_lines: int | None = None
     variance: str = "mid"
     seed: int | None = None
+    sessions: int = 3
+    prompts_per_session: int = 3
+    omit: list[str] = []
 
 
 class ValidateSeedRangeRequest(BaseModel):
@@ -175,6 +185,8 @@ async def analyze(
     capacity_headroom: float = Form(2.0),
     ground_truth: str | None = Form(None),
     demand_model: str = Form(DEFAULT_DEMAND_MODEL),
+    price_input_per_mtok: float | None = Form(None),
+    price_output_per_mtok: float | None = Form(None),
 ) -> dict:
     """Run the uploaded trace file(s) through Observe -> Profile -> Mine ->
     Score -> Recommend for one workflow (auto-picked if not given).
@@ -194,7 +206,19 @@ async def analyze(
     manifest (as returned by ``/generate``) -- when present, the report
     includes a "validation" section scoring the profiler's classification
     against it.
+
+    ``price_input_per_mtok`` / ``price_output_per_mtok`` ($ per 1M tokens)
+    opt in to estimating cost for LLM calls that have tokens but no
+    recorded cost -- offered by the report's data notice when cost is
+    missing.
     """
+    if (price_input_per_mtok is None) != (price_output_per_mtok is None):
+        raise HTTPException(status_code=400, detail="give both token prices (input and output) or neither")
+    token_prices = None
+    if price_input_per_mtok is not None:
+        if price_input_per_mtok < 0 or price_output_per_mtok < 0:
+            raise HTTPException(status_code=400, detail="token prices can't be negative")
+        token_prices = (price_input_per_mtok, price_output_per_mtok)
     events: list[TraceEvent] = []
     file_summaries: list[dict] = []
     seen_digests: dict[str, str] = {}
@@ -239,6 +263,7 @@ async def analyze(
             capacity_headroom=capacity_headroom,
             ground_truth=parsed_ground_truth,
             demand_model=demand_model,
+            token_prices=token_prices,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -248,12 +273,14 @@ async def analyze(
 
 @app.post("/generate")
 def generate(req: GenerateRequest) -> dict:
-    """Generate synthetic trace data (vendored from
-    ipintotech-lab/agents_profile_rawdata_gen) for the dashboard's
-    "generate sample data" path. Returns the same JSONL format /analyze
-    accepts as an upload, plus a summary."""
+    """Generate synthetic trace data (``rawdata_gen``) for the dashboard's
+    "generate sample data" path: the mock agents' events, or Claude Code
+    session transcripts. Returns JSONL /analyze accepts as an upload, plus a
+    summary."""
     seed = req.seed if req.seed is not None else random.SystemRandom().randrange(2**32)
     rng = random.Random(seed)
+    if req.format == "claude_code":
+        return _generate_claude_code(req, rng, seed)
     try:
         runs = generate_configured(
             req.agent_count, req.actions_per_agent, req.total_lines, rng=rng, variance=req.variance
@@ -269,6 +296,41 @@ def generate(req: GenerateRequest) -> dict:
             for run in runs
         ],
         **build_dataset_manifest(runs, seed=seed),
+    }
+
+
+def _generate_claude_code(req: GenerateRequest, rng: random.Random, seed: int) -> dict:
+    try:
+        sessions = generate_sessions(req.sessions, req.prompts_per_session, rng, tuple(req.omit))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    rows = [row for session in sessions for row in session]
+    runs = []
+    for session in sessions:
+        prompts = [r for r in session if r["type"] == "user" and isinstance(r["message"]["content"], str)]
+        for prompt in prompts:
+            runs.append(
+                {
+                    "run_id": prompt["promptId"],
+                    "agent": "claude-code",
+                    "workflow": f"claude-code/{prompt['cwd'].rsplit('/', 1)[-1]}",
+                    # tool calls: the request's records other than the prompt are tool results
+                    "num_actions": sum(1 for r in session if r.get("promptId") == prompt["promptId"]) - 1,
+                    "prompt": prompt["message"]["content"],
+                }
+            )
+    return {
+        "format": "claude_code",
+        "jsonl": "\n".join(json.dumps(row, separators=(",", ":")) for row in rows),
+        "num_events": len(rows),
+        "num_runs": len(runs),
+        "num_sessions": len(sessions),
+        "omitted": sorted(set(req.omit)),
+        "runs": runs,
+        "ground_truth": None,
+        "dataset_id": uuid.uuid4().hex,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "seed": seed,
     }
 
 

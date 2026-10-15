@@ -28,9 +28,10 @@ this repo currently has:
 - an Observe/Mine/Score/Recommend pipeline (`src/profiler/`) that takes a
   trace file for one workflow and produces per-node determinism
   classification, cost-weighted scoring, and rule-based recommendations;
-- a synthetic trace-data generator (`src/rawdata_gen/`, vendored from
-  [`agents_profile_rawdata_gen`](https://github.com/ipintotech-lab/agents_profile_rawdata_gen))
-  so the pipeline can be exercised without a real trace file;
+- a synthetic trace-data generator (`src/rawdata_gen/`, merged in from
+  [`agents_profile_rawdata_gen`](https://github.com/ipintotech-lab/agents_profile_rawdata_gen),
+  which it replaces) that writes mock agent events or Claude Code session
+  transcripts, so the pipeline can be exercised without a real trace file;
 - a dashboard UI (`src/api/static/index.html`) at `/` that runs an uploaded
   trace file, or data generated in-browser, through that pipeline and
   renders the report;
@@ -74,15 +75,19 @@ controls — those remain out of scope per the design doc above.
   report's `summary`: totals plus ranked savings opportunities
   (`EXTRACT_DETERMINISTIC_SUBSTEP`, `CACHE_RESULT`,
   `CONDITIONAL_LLM_BYPASS`, `REVIEW_HIDDEN_STATE`), each with its evidence
-  and the observed cost it would remove. The dashboard leads with that
+  and the observed cost it would remove. `CACHE_RESULT` is never suggested
+  for a call whose name says it changes something (create, update, send,
+  edit, ...; `has_side_effect`), since skipping it would skip the change.
+  The dashboard leads with that
   summary, then repetition, then nodes (costliest first); capacity planning
   and the per-node score list are folded under "advanced".
-- `src/rawdata_gen/` — synthetic trace-data generator vendored from
+- `src/rawdata_gen/` — synthetic trace-data generator, merged in from
   [`agents_profile_rawdata_gen`](https://github.com/ipintotech-lab/agents_profile_rawdata_gen)
-  (copied source, not a dependency, since that repo has no packaging
-  metadata); `generate_configured(agent_count, actions_per_agent,
-  total_lines)` builds mock agent runs for the dashboard's "Generate sample
-  data" tab.
+  and developed here now; `generate_configured(agent_count,
+  actions_per_agent, total_lines)` builds mock agent runs,
+  `claude_code_sessions.generate_sessions(...)` builds Claude Code
+  transcripts, and `python -m rawdata_gen` is the CLI (see "Generating
+  sample data").
 - `src/api/` — a thin FastAPI wrapper exposing the raw solver (`/solve`,
   `/examples/capacity-allocation`), the Observe→Recommend pipeline
   (`/analyze`), the sample-data generator (`/generate`), and `/health`, plus
@@ -153,6 +158,66 @@ python -m ingest.convert ~/.claude/projects/<project>/*.jsonl --hash-inputs -o t
 curl -F file=@traces.jsonl localhost:8000/analyze
 ```
 
+### Generating sample data
+
+`python -m rawdata_gen` (run from `src/`, or with `PYTHONPATH=src`) asks what
+to generate, like the old repo's `run.sh`; flags skip the questions:
+
+```bash
+# the mock agents' trace events (1-6 agents, 4-20 actions each, lines in multiples of 20)
+python -m rawdata_gen --agents 2 --actions 4 6 --lines 40 -o data/agent_traces.jsonl
+# Claude Code session transcripts, the format under ~/.claude/projects/
+python -m rawdata_gen --format claude-code --sessions 5 --prompts 3 -o data/sessions.jsonl
+# ...with attributes left out, to see how the report flags incomplete data
+python -m rawdata_gen --format claude-code --omit cost tokens
+```
+
+`--seed` reproduces the same data. The dashboard's "Generate sample data" tab
+does the same through `/generate` (`"format": "claude_code"`, `"sessions"`,
+`"prompts_per_session"`, `"omit"`).
+
+The six mock agents (in `--agents` order) each plant findings the report
+should surface, and a trap it should not:
+
+| agent | workflow | planted | trap |
+|---|---|---|---|
+| security-agent | cve-remediation | rule-like `classify_severity`; varying `analyze_remediation` | caching `create_or_update_ticket` (it writes) |
+| support-agent | support-ticket-triage | varying `classify_ticket`, `draft_response` | caching `send_acknowledgement` |
+| release-agent | deployment-incident | varying `assess_incident` | a rule for `assess_incident` |
+| code-review-agent | pull-request-review | an LLM planner walking the fixed chain `fetch_diff → run_linter → run_tests`; rule-like `decide_verdict`; varying `write_review_comments` | — |
+| data-pipeline-agent | etl-incident-response | cacheable `get_table_schema`; rule-like `decide_retry`; varying `diagnose_failure` | caching `check_job_status` (its status changes) |
+| sales-agent | lead-qualification | cacheable `enrich_company`, `assign_rep`; rule-like `score_lead`; varying `choose_sequence`, `write_outreach` | caching `check_crm_duplicate` |
+
+The full list, with the reason for each, is `EXPECTED_FINDINGS` in
+`src/rawdata_gen/ground_truth.py`.
+
+### POC: expected vs. found
+
+The dashboard's POC tab (`POST /poc/run`) checks how much data the profiler
+needs before its calls stop changing. Every phase grades all six agents'
+workflows (it used to grade only the largest one). Phase 6 puts the planted
+findings above next to what the report found on the same data: planted
+findings found, traps flagged anyway (false alarms), findings nobody planted,
+and per-node determinism expected vs. classified, at each sample size.
+Synthetic agents are simpler than real ones, so a full match doesn't prove
+the profiler is right on real traces, but each miss or false alarm is a
+concrete case to look at.
+
+### When the data is incomplete
+
+Trace sources record different things: Claude Code transcripts have tokens,
+cost, timing and real tool inputs; `cx-cmu/agent_trajectories` has no
+tokens, cost or timing; FreeInference has anonymized inputs and no cost.
+Missing attributes would otherwise just read as 0, so the report opens with a
+notice listing what is missing and which numbers that empties (the
+`data_quality` key in `/analyze`'s response).
+
+When tokens are recorded but cost isn't, the notice offers an opt-in cost
+estimate: enter $ per 1M input / output tokens and re-run. Over HTTP, pass
+both `price_input_per_mtok` and `price_output_per_mtok` form fields to
+`/analyze`. Recorded costs are never replaced, and the report labels the cost
+as estimated -- an upper bound, since cached input is priced at the full rate.
+
 ### Hugging Face datasets
 
 Public agent-trace datasets can be read straight from a Hugging Face link
@@ -204,7 +269,7 @@ dataset needs a token in the form or `HF_TOKEN` set on the server.
       - dashboard: paste it in the tab's "Token" field (it's sent only to
         this server, for that request);
       - command line: `export HF_TOKEN=hf_...`, or
-        `pip install huggingface_hub && hf auth login` (saves it to
+        `python -m pip install datasets huggingface_hub` then `hf auth login` (saves it to
         `~/.cache/huggingface/token`, which is picked up automatically);
       - deployed server: set `HF_TOKEN` in the Railway service's variables.
 3. **Which file?** One dataset often has several files. "List files" (or

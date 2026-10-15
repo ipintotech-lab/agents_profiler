@@ -228,3 +228,21 @@ def test_analyze_maps_hugging_face_errors(monkeypatch):
     assert resp.status_code == 403
     assert client.post("/analyze", data={}).status_code == 400
     assert client.post("/analyze", data={"hf_url": "org/name", "hf_limit": "0"}).status_code == 400
+
+
+def test_redundant_tool_namespace_is_dropped():
+    from ingest.chat_trajectory import convert_chat_trajectory, tool_name
+
+    assert tool_name("swebench__swebench_execute_bash") == "swebench_execute_bash"
+    assert tool_name("swebench_execute_bash") == "swebench_execute_bash"
+    assert tool_name("FruityVice__get_fruit_nutrition") == "FruityVice__get_fruit_nutrition"
+    assert tool_name("search__web_search") == "search__web_search"
+    record = {"id": "r", "benchmark": "swebench", "messages": [
+        {"role": "user", "content": "fix it"},
+        {"role": "assistant", "tool_calls": [
+            {"id": "a", "function": {"name": "swebench__swebench_str_replace_editor", "arguments": '{"command": "view", "path": "x.py"}'}},
+            {"id": "b", "function": {"name": "swebench_str_replace_editor", "arguments": '{"command": "view", "path": "y.py"}'}},
+        ]},
+    ]}
+    names = {e["tool"]["name"] for e in convert_chat_trajectory(record) if e.get("tool")}
+    assert names == {"swebench_str_replace_editor"}

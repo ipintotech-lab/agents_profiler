@@ -107,3 +107,14 @@ def test_summary_ranks_opportunities_and_prices_cache_with_deciding_cost():
     savings = [o["saving"] for o in summary["opportunities"] if o["saving"] is not None]
     assert savings == sorted(savings, reverse=True)
     assert summary["totals"]["tool_calls"] == 12
+
+
+def test_has_side_effect_reads_the_operation_name():
+    from profiler.opportunities import has_side_effect
+
+    for name in ("create_or_update_ticket", "messaging.send_reply", "Edit", "Write",
+                 "str_replace_editor", "mcp__jira__createIssue", "log_activity"):
+        assert has_side_effect(name), name
+    for name in ("Read", "Grep", "fetch_error_log", "scheduler.get_logs", "get_table_schema",
+                 "search__web_search", "assign_rep", "check_job_status"):
+        assert not has_side_effect(name), name

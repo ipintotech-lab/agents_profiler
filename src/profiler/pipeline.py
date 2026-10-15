@@ -21,6 +21,7 @@ from ingest import (
 from ingest.trace_schema import TraceEvent
 
 from .calibration import calibrate_determinism_thresholds
+from .data_quality import check_data_quality, estimate_missing_costs
 from .determinism import Classification
 from .mine import mine, observe, recommend, score
 from .opportunities import build_summary
@@ -61,7 +62,14 @@ def run_pipeline(
     ground_truth: dict[str, dict] | None = None,
     demand_model: str = DEFAULT_DEMAND_MODEL,
     sensitivity_ratios: list[float] | None = None,
+    token_prices: tuple[float, float] | None = None,
 ) -> dict:
+    """``token_prices`` -- $ per 1M input / output tokens -- opts in to
+    estimating cost for LLM calls that have tokens but no recorded cost."""
+    recorded = events
+    estimated = None
+    if token_prices is not None:
+        events, estimated = estimate_missing_costs(events, *token_prices)
     observed = observe(events)
     if not observed["workflows"]:
         raise ValueError("no workflow found in the uploaded trace file")
@@ -69,6 +77,10 @@ def run_pipeline(
     selected_workflow = workflow or observed["workflows"][0]["name"]
     if selected_workflow not in {w["name"] for w in observed["workflows"]}:
         raise ValueError(f"workflow '{selected_workflow}' not present in the uploaded trace file")
+    if estimated is not None:
+        # how many of the analyzed workflow's calls got an estimate
+        filled = sum(1 for a, b in zip(recorded, events, strict=True) if a.workflow == selected_workflow and a.cost != b.cost)
+        estimated = {**estimated, "events": filled} if filled else None
 
     formula_defaults = compute_default_formula(
         events, selected_workflow, capacity_headroom=capacity_headroom, demand_model=demand_model
@@ -175,6 +187,7 @@ def run_pipeline(
 
     report = {
         "summary": build_summary(events, selected_workflow, repetition, scored),
+        "data_quality": check_data_quality([e for e in recorded if e.workflow == selected_workflow], estimated),
         "observe": {**observed, "selected_workflow": selected_workflow},
         "formula": {"used": formula_used, "defaults": formula_defaults, "per_workflow": formula_by_workflow},
         "profile": {**_serialize_bpop_result(bpop_result), "sensitivity": sensitivity},

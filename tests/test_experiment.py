@@ -6,6 +6,7 @@ from profiler.experiment import (
     VALIDATION_SEEDS,
     calibrate_multi_seed,
     detect_stabilization_point,
+    expected_vs_found,
     recommendation_stability,
     run_poc,
     sample_size_experiment,
@@ -123,19 +124,46 @@ def test_run_poc_end_to_end_small_smoke():
     assert "phase2_stabilization" in result
     assert result["phase4_bpop_evaluation"]["note"]
     assert result["phase5_modeled_cost"]["modeled"] is True
+    assert result["phase6_expected_vs_found"]["summary"]["planted_total"] > 0
 
 
-def test_run_poc_full_default_run_finds_measured_stabilization_point():
+def test_expected_vs_found_reports_planted_findings_and_traps():
+    result = expected_vs_found(sample_size=2000, seed=101, sample_sizes=(100, 2000))
+    rows = result["rows"]
+    # every agent's workflow is graded, not only the largest one
+    assert len({r["workflow"] for r in rows}) == 6
+    s = result["summary"]
+    assert s["planted_total"] == sum(1 for r in rows if r["expected"])
+    assert s["traps"] == sum(1 for r in rows if not r["expected"])
+    # the plain cacheable lookups and scripted chain are found at this size
+    found = {(r["type"], r["target"]) for r in rows if r["found"]}
+    assert ("CACHE_RESULT", "get_table_schema") in found
+    assert ("EXTRACT_DETERMINISTIC_SUBSTEP", "fetch_diff → run_linter → run_tests") in found
+    assert all(r["agrees"] == (r["found"] == r["expected"]) for r in rows)
+    # more data never finds fewer planted findings on the same seed here
+    small, large = result["by_sample_size"]
+    assert small["planted_found"] <= large["planted_found"] == s["planted_found"]
+    assert not any("_followup_" in u["target"] for u in result["unplanned"])
+
+
+def test_run_poc_full_default_run_matches_measured_result():
     """Locks in the measured full-rigor result (30 calibration seeds, 30
-    validation seeds, BASELINE_CONFIG): the pipeline finds a real
-    plateau at n=5000 under the shipped default criteria, not just a
-    forced/arbitrary result. If this ever regresses, either the pipeline
-    behavior genuinely changed (investigate) or BASELINE_CONFIG /
-    DEFAULT_PLATEAU_CRITERIA changed on purpose (update this test)."""
+    validation seeds, BASELINE_CONFIG with all six agents). With six
+    workflows sharing the line budget, the shipped defaults (3, 0.1, 10)
+    make 1 false negative across the 30 calibration seeds, so Phase 1
+    picks min_repeated_inputs=10; coverage then stays below the 0.375
+    plateau bar up to n=10000 and no stabilization point is found. When
+    only the CVE workflow was graded this found a plateau at n=5000. If
+    this changes, either the pipeline behavior changed (investigate) or
+    BASELINE_CONFIG / DEFAULT_PLATEAU_CRITERIA changed on purpose (update
+    this test)."""
     result = run_poc()
-    assert result["phase2_stabilization"]["stabilization_point"] == 5000
-    assert result["conclusion"] == "SUPPORTED"
+    assert result["phase1_calibration"]["selected"]["min_repeated_inputs"] == 10
+    assert result["phase2_stabilization"]["stabilization_point"] is None
+    assert result["conclusion"] == "NOT YET SUPPORTED"
     assert result["phase3_recommendation_stability"]["top1_stability"] == 1.0
+    p6 = result["phase6_expected_vs_found"]["summary"]
+    assert (p6["planted_found"], p6["planted_total"], p6["false_alarms"]) == (16, 17, 0)
 
 
 def test_poc_run_endpoint_returns_full_report():
@@ -147,3 +175,11 @@ def test_poc_run_endpoint_returns_full_report():
     assert resp.status_code == 200
     body = resp.json()
     assert body["conclusion"] in {"SUPPORTED", "NOT YET SUPPORTED"}
+
+
+def test_calls_that_change_something_are_never_cache_findings():
+    result = expected_vs_found(sample_size=2000, seed=101)
+    flagged = {r["target"] for r in result["rows"] if r["type"] == "CACHE_RESULT" and r["found"]}
+    assert "create_or_update_ticket" not in flagged
+    assert "send_acknowledgement" not in flagged
+    assert {"get_table_schema", "enrich_company", "assign_rep"} <= flagged

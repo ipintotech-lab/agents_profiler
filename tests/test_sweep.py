@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from api.main import app
 from profiler.sweep import TOTAL_LINES_STEPS, _build_cases, run_sweep
+from rawdata_gen.generate_traces import AGENT_GENERATORS
 
 
 def test_build_cases_covers_every_option_of_every_dimension():
@@ -10,7 +11,7 @@ def test_build_cases_covers_every_option_of_every_dimension():
     assert groups == {"baseline", "agent_count", "variance", "demand_model", "total_lines", "formula_override"}
 
     agent_counts = {c["config"]["agent_count"] for c in cases if c["group"] == "agent_count"}
-    assert agent_counts == {1, 2, 3}
+    assert agent_counts == set(range(1, len(AGENT_GENERATORS) + 1))
 
     variances = {c["config"]["variance"] for c in cases if c["group"] == "variance"}
     assert variances == {"low", "mid", "high"}

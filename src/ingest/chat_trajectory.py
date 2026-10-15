@@ -67,6 +67,15 @@ def _arguments(raw: Any) -> dict:
     return {} if raw is None else {"arguments": raw}
 
 
+def tool_name(name: str) -> str:
+    """Drop a redundant ``<server>__`` namespace: cx-cmu logs the same tool
+    as both ``swebench__swebench_execute_bash`` and ``swebench_execute_bash``,
+    which would split one tool into two nodes. A namespace that adds
+    information (``FruityVice__get_fruit_nutrition``) is kept."""
+    server, sep, rest = name.partition("__")
+    return rest if sep and rest.startswith(f"{server}_") else name
+
+
 def chat_tool_operation(name: str, arguments: dict) -> str:
     """Like ``tool_operation``, but any tool that takes a shell ``command``
     (``execute_bash``, ``terminal``, ...) is named by the command it ran."""
@@ -135,7 +144,7 @@ def convert_chat_trajectory(record: dict, index: int = 0) -> list[dict]:
         nodes = []
         for tc in tool_calls:
             function = tc.get("function") or {}
-            name = function.get("name") or tc.get("name") or "unknown"
+            name = tool_name(function.get("name") or tc.get("name") or "unknown")
             arguments = _arguments(function.get("arguments", tc.get("arguments")))
             node = chat_tool_operation(name, arguments)
             nodes.append(node)

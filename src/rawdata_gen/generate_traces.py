@@ -6,13 +6,23 @@ import random
 import uuid
 from datetime import UTC, datetime
 
+from .agents.code_review import generate as generate_code_review
 from .agents.common import VARIANCES, Run, to_jsonl
 from .agents.cve_remediation import generate as generate_cve
+from .agents.data_pipeline import generate as generate_data_pipeline
 from .agents.deployment_incident import generate as generate_deployment
+from .agents.lead_qualification import generate as generate_lead_qualification
 from .agents.support_triage import generate as generate_support
 from .ground_truth import build_ground_truth_manifest
 
-AGENT_GENERATORS = [generate_cve, generate_support, generate_deployment]
+AGENT_GENERATORS = [
+    generate_cve,
+    generate_support,
+    generate_deployment,
+    generate_code_review,
+    generate_data_pipeline,
+    generate_lead_qualification,
+]
 
 
 def _build_run(generator, action_count: int, run_id: str, rng: random.Random, variance: str) -> Run:
