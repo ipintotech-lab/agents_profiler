@@ -95,6 +95,9 @@
   tr.node-detail table { margin: 0; font-size: 12px; }
   .inp { white-space: pre-wrap; word-break: break-all; color: var(--ink); }
   .inp .k { color: var(--dim); }
+  .fp-summary { margin: 10px 0 6px; }
+  .fp-meta { font-size: 11px; color: var(--faint); }
+  details.classifier-inputs summary { cursor: pointer; color: var(--dim); margin: 8px 0; }
   .inp hr.tsep { border: 0; border-top: 1px dashed var(--line, #ccc); margin: 4px 0; }
   .oc { display: inline-block; margin: 1px 6px 1px 0; padding: 1px 6px; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; color: var(--dim); }
   .oc b { color: var(--ink); font-weight: normal; }
@@ -300,14 +303,14 @@
     <table id="sensitivityTable"><thead><tr><th>Ratio</th><th class="num">unit_value</th><th class="num">x*</th><th class="num">y*</th><th class="num">objective</th></tr></thead><tbody></tbody></table>
 
     <h2><span class="idx">03</span>Mine <span style="font-size:12px;color:var(--faint)">— agents &amp; action determinism</span></h2>
-    <p class="lede">For each agent, every distinct action (node) it takes, and whether the same input ever produced a different outcome.</p>
+    <p class="lede">For each agent, every distinct action (node) it takes, and whether the same input ever produced a different outcome. Click a node to see its actions by starting point (what triggered them), grouped by action fingerprint: business (node + trigger + input), context (+ the triggering step's result), execution (+ model and agent version).</p>
     <div id="agentsContainer"></div>
 
     <h2><span class="idx">03·b</span>Repetition <span style="font-size:12px;color:var(--faint)">— what the agent does over and over</span></h2>
     <p class="lede">Repeated sequences: the same steps in the same order, recurring across runs. "Between steps" is the LLM calls (and their real tokens and cost) spent only on choosing the next step inside the sequence. Combining the sequence into one scripted flow would remove those. Click a row to see an example.</p>
     <table id="seqTable"><thead><tr><th>Sequence</th><th class="num">Seen</th><th class="num">Runs</th><th class="num">LLM calls between steps</th><th class="num">Tokens between steps</th><th class="num">Cost between steps</th><th class="num">Total cost</th></tr></thead><tbody></tbody></table>
     <p class="lede">Repeated calls: the same operation with the identical input. If every repeat gave the same output, each repeat after the first was redundant (a cache candidate).</p>
-    <table id="callTable"><thead><tr><th>Operation</th><th>Input</th><th>Triggered by (user input)</th><th class="num">Seen</th><th>Output</th><th class="num">Redundant</th></tr></thead><tbody></tbody></table>
+    <table id="callTable"><thead><tr><th>Operation</th><th>Input</th><th>User input</th><th class="num">Seen</th><th>Output</th><th class="num">Redundant</th></tr></thead><tbody></tbody></table>
 
     <h2><span class="idx">04</span>Score</h2>
     <p class="lede" id="scoreFormula"></p>
@@ -1003,7 +1006,7 @@ function render(data) {
           <thead><tr><th>Node (action)</th><th>Determinism</th><th class="num">Occurrences</th><th class="num">Avg cost</th><th class="num">Avg latency (ms)</th><th class="num">Score</th></tr></thead>
           <tbody>
             ${info.actions.map(a => `
-              <tr class="node-row" title="Show the inputs seen at this node">
+              <tr class="node-row" title="Show this node's actions by starting point">
                 <td>${esc(a.node)}</td>
                 <td><span class="pill ${classificationPillClass(a.classification)}">${classificationLabel(a.classification)}</span></td>
                 <td class="num">${a.occurrences}</td>
@@ -1011,7 +1014,7 @@ function render(data) {
                 <td class="num">${a.avg_latency_ms.toFixed(0)}</td>
                 <td class="num ${a.score >= 0.5 ? 'warn' : ''}">${a.score.toFixed(3)}</td>
               </tr>
-              <tr class="node-detail" hidden><td colspan="6">${nodeInputsTable(a.evidence)}</td></tr>`).join('')}
+              <tr class="node-detail" hidden><td colspan="6">${a.fingerprints ? nodeFingerprintView(a.fingerprints) : ''}<details class="classifier-inputs"><summary>Inputs used by the determinism classifier</summary>${nodeInputsTable(a.evidence)}</details></td></tr>`).join('')}
           </tbody>
         </table>
       </div>
@@ -1035,14 +1038,14 @@ function render(data) {
       <td class="num">$${p.cost_between_steps.toFixed(2)}</td>
       <td class="num">$${p.sequence_cost.toFixed(2)}</td>
     </tr>
-    <tr class="node-detail" hidden><td colspan="7">${p.example[0].trigger ? `<p class="lede"><b>Triggered by:</b> ${esc(p.example[0].trigger)}</p>` : ''}<table><thead><tr><th>Example step</th><th>Input</th></tr></thead><tbody>
+    <tr class="node-detail" hidden><td colspan="7">${p.example[0].user_input ? `<p class="lede"><b>User input:</b> ${esc(p.example[0].user_input)}</p>` : ''}<table><thead><tr><th>Example step</th><th>Input</th></tr></thead><tbody>
       ${p.example.map(st => `<tr><td>${esc(st.node)}</td><td class="inp">${inputText(st.input) || '<span class="k">(empty input)</span>'}</td></tr>`).join('')}
     </tbody></table></td></tr>`).join('') : '<tr><td colspan="7">No sequence repeated 3+ times.</td></tr>';
   document.querySelector('#callTable tbody').innerHTML = rep.calls.length ? rep.calls.map(c => `
     <tr>
       <td>${esc(c.node)}</td>
       <td class="inp">${inputText(c.input) || '<span class="k">(empty input)</span>'}</td>
-      <td class="inp">${(c.triggers || []).map(esc).join('\n<hr class="tsep">') || '<span class="k">—</span>'}</td>
+      <td class="inp">${(c.user_inputs || []).map(esc).join('\n<hr class="tsep">') || '<span class="k">—</span>'}</td>
       <td class="num">${c.count}</td>
       <td>${c.same_output ? '<span class="pill det">same every time</span>' : `<span class="pill nondet">${c.distinct_outputs} different</span>`}</td>
       <td class="num">${c.redundant_calls}</td>
@@ -1134,10 +1137,48 @@ function verdictLabel(v) {
   return '<span class="pill">seen once</span> ';
 }
 
-function triggersText(triggers, distinct) {
-  if (!triggers.length) return '<span class="k">—</span>';
-  const more = distinct > triggers.length ? `\n<span class="k">+${distinct - triggers.length} more</span>` : '';
-  return triggers.map(t => `${esc(t.trigger)}${t.count > 1 ? ` <span class="k">×${t.count}</span>` : ''}`).join('\n<hr class="tsep">') + more;
+const pct = x => x == null ? '—' : `${Math.round(x * 100)}%`;
+
+function nodeFingerprintView(fp) {
+  const lv = fp.levels;
+  const level = (name, l) => `<b>${name}</b> ${pct(l.agreement)} <span class="k">(${l.repeated_groups}/${l.groups} fingerprints repeated)</span>`;
+  const triggers = fp.triggers.map(t => `<tr>
+      <td>${esc(t.trigger)}</td>
+      <td class="num">${t.observations}</td>
+      <td class="num">${t.distinct_inputs}</td>
+      <td>${esc(t.dominant_output)} <span class="k">${t.dominant_output_count}/${t.observations}</span></td>
+      <td class="num">${pct(t.dominant_output_rate)}</td>
+    </tr>`).join('');
+  const shown = fp.groups.length < fp.num_groups ? `top ${fp.groups.length} of ${fp.num_groups}` : `all ${fp.num_groups}`;
+  const groups = fp.groups.map(g => {
+    const entries = Object.entries(g.input);
+    const inp = entries.length
+      ? entries.map(([k, v]) => `<span class="k">${esc(k)}:</span> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}`).join('\n')
+      : '<span class="k">(empty input)</span>';
+    const split = g.observations > 1
+      ? `context: ${g.splits.context.groups} fp · ${pct(g.splits.context.agreement)}\nexecution: ${g.splits.execution.groups} fp · ${pct(g.splits.execution.agreement)}`
+      : '—';
+    const users = g.representatives.filter(r => r.user_input).map(r => esc(r.user_input)).join('\n<hr class="tsep">');
+    return `<tr>
+      <td>${esc(g.trigger)}</td>
+      <td class="inp">${inp}</td>
+      <td class="num">${g.observations}<span class="k"> · ${g.sessions} sess</span></td>
+      <td>${verdictLabel(g.verdict)}${g.outputs.map(o => `<span class="oc"><b>${esc(o.output)}</b> ×${o.count}</span>`).join('')}</td>
+      <td class="num">${pct(g.dominant_output_rate)}</td>
+      <td class="inp">${split}</td>
+      <td class="inp">${users || '<span class="k">—</span>'}</td>
+    </tr>`;
+  }).join('');
+  return `<p class="lede fp-summary">Agreement by fingerprint level: ${level('business', lv.business)} → ${level('context', lv.context)} → ${level('execution', lv.execution)}<br>${esc(fp.variance.explanation)}</p>
+  <table><thead><tr><th>Starting point (trigger)</th><th class="num">Seen</th><th class="num">Distinct inputs</th><th>Dominant output</th><th class="num">Dominant rate</th></tr></thead><tbody>${triggers}</tbody></table>
+  <table><thead><tr><th>Starting point</th><th>Input (business fingerprint, ${shown}, differing first)</th><th class="num">Seen</th><th>Verdict · outputs</th><th class="num">Dominant rate</th><th>Splits at deeper levels</th><th>User input (examples)</th></tr></thead><tbody>${groups}</tbody></table>
+  <p class="lede fp-meta">Fingerprint schema v${fp.schema_version}. Identity: ${esc(fp.fields.execution.join(', '))}. Excluded from identity: ${esc(fp.excluded_from_identity.join(', '))}.</p>`;
+}
+
+function userInputsText(items, distinct) {
+  if (!items.length) return '<span class="k">—</span>';
+  const more = distinct > items.length ? `\n<span class="k">+${distinct - items.length} more</span>` : '';
+  return items.map(t => `${esc(t.user_input)}${t.count > 1 ? ` <span class="k">×${t.count}</span>` : ''}`).join('\n<hr class="tsep">') + more;
 }
 
 function nodeInputsTable(ev) {
@@ -1145,7 +1186,7 @@ function nodeInputsTable(ev) {
   if (!inputs.length) return '<p class="lede">No inputs recorded for this node.</p>';
   const shown = inputs.length < ev.unique_inputs ? `top ${inputs.length} of ${ev.unique_inputs}` : `all ${ev.unique_inputs}`;
   return `<table>
-    <thead><tr><th>Input (${shown} distinct, conflicting first)</th><th>Triggered by (user input)</th><th class="num">Seen</th><th>Verdict · outcomes</th></tr></thead>
+    <thead><tr><th>Input (${shown} distinct, conflicting first)</th><th>User input</th><th class="num">Seen</th><th>Verdict · outcomes</th></tr></thead>
     <tbody>${inputs.map(i => {
       const entries = Object.entries(i.input);
       const inp = entries.length
@@ -1153,7 +1194,7 @@ function nodeInputsTable(ev) {
         : '<span class="k">(empty input)</span>';
       return `<tr>
         <td class="inp">${inp}</td>
-        <td class="inp">${triggersText(i.triggers || [], i.distinct_triggers || 0)}</td>
+        <td class="inp">${userInputsText(i.user_inputs || [], i.distinct_user_inputs || 0)}</td>
         <td class="num">${i.count}</td>
         <td>${verdictLabel(i.verdict)}${i.outcomes.map(o => `<span class="oc"><b>${esc(outcomeLabel(o))}</b> ×${o.count}</span>`).join('')}</td>
       </tr>`;

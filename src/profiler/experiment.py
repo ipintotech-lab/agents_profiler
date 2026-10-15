@@ -298,7 +298,7 @@ def detect_stabilization_point(curve: list[dict], *, criteria: dict | None = Non
 def _ranked_items(events: list[TraceEvent], workflow: str) -> list[str]:
     """``"agent/node"`` items ordered worst-scoring (highest-priority)
     first, reusing ``mine.py``'s own ``recommend()`` ranking as-is."""
-    stats = score(mine(events, workflow))
+    stats = score(mine(events, workflow, with_fingerprints=False))
     return [f"{r['agent']}/{r['node']}" for r in recommend(stats)]
 
 
@@ -414,7 +414,7 @@ def modeled_cost_savings(
 ) -> dict:
     events, _ = _dataset(sample_size, seed, config)
     wf = _selected_workflow(events)
-    stats = mine(events, wf)
+    stats = mine(events, wf, with_fingerprints=False)
 
     per_node = []
     total_before = 0.0

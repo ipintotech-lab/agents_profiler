@@ -34,6 +34,8 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "cost": ("cost", "cost_usd", "costUsd"),
     "result": ("result", "output", "outputValue", "output_value"),
     "workflow_version": ("workflow_version", "workflowVersion"),
+    "trigger": ("trigger", "triggered_by", "triggeredBy"),
+    "user_input": ("user_input", "userInput", "user_prompt", "prompt"),
 }
 
 _CONTAINER_KEYS = ("events", "data", "traces", "runs", "items", "results", "rows")
@@ -165,7 +167,7 @@ def parse_raw_text(text: str) -> Any:
 
 def hash_input_values(rows: list[dict]) -> list[dict]:
     """Replace every ``input_state`` value with ``"sha256:<digest>"``,
-    keeping the keys, and the ``trigger`` (the user prompt). Equal values still hash equal, so determinism
+    keeping the keys, and the ``user_input`` (the user prompt). Equal values still hash equal, so determinism
     classification is unchanged, but commands, file paths, edit text, etc.
     no longer appear in the data."""
     def digest(value: object) -> str:
@@ -173,8 +175,8 @@ def hash_input_values(rows: list[dict]) -> list[dict]:
 
     hashed = []
     for row in rows:
-        if isinstance(row.get("trigger"), str):
-            row = {**row, "trigger": digest(row["trigger"])}
+        if isinstance(row.get("user_input"), str):
+            row = {**row, "user_input": digest(row["user_input"])}
         state = row.get("input_state")
         if isinstance(state, dict):
             row = {

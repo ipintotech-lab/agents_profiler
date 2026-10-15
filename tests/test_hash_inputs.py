@@ -62,8 +62,8 @@ def test_convert_cli_reports_unparseable_file(tmp_path, capsys):
     assert "bad.json" in capsys.readouterr().err
 
 
-def test_hash_inputs_also_hashes_the_trigger():
+def test_hash_inputs_also_hashes_the_user_input():
     from ingest import hash_input_values
 
-    (row,) = hash_input_values([{"trigger": "my secret prompt", "input_state": {"a": 1}}])
-    assert row["trigger"].startswith("sha256:")
+    (row,) = hash_input_values([{"user_input": "my secret prompt", "input_state": {"a": 1}}])
+    assert row["user_input"].startswith("sha256:")

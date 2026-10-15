@@ -62,7 +62,14 @@ controls — those remain out of scope per the design doc above.
   (classify each node deterministic/non-deterministic by whether the same
   `input_state` always yields the same `(decision.selected, result)`) →
   Score (cost-weighted scoring per node) → Recommend (rule-based
-  suggestions), orchestrated by `run_pipeline()`.
+  suggestions), orchestrated by `run_pipeline()`. `fingerprint.py` adds
+  action fingerprints per node -- each action grouped by its starting
+  point (`trigger`) and logical identity at three levels (business: node +
+  trigger + input; context: + the triggering step's result; execution: +
+  model and agent version), with output distributions, dominant-output
+  rates and a variance explanation. It's evidence alongside the
+  classifier, not a change to it. `patterns.py` mines repeated step
+  sequences and repeated identical calls.
 - `src/rawdata_gen/` — synthetic trace-data generator vendored from
   [`agents_profile_rawdata_gen`](https://github.com/ipintotech-lab/agents_profile_rawdata_gen)
   (copied source, not a dependency, since that repo has no packaging

@@ -259,7 +259,7 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
             "workflow": f"claude-code/{PurePosixPath(cwd).name or 'unknown'}",
             "agent": "claude-code-subagent" if sidechain else "claude-code",
             "workflow_version": r.get("version"),
-            "trigger": prompt_text.get(lane) or prompt_text.get(f"{session}:False"),
+            "user_input": prompt_text.get(lane) or prompt_text.get(f"{session}:False"),
         }
         ts = _ts_ms(r)
 
@@ -272,6 +272,7 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
                 "node": f"llm_call ← {trigger.split(' + ')[0].split(':')[0].removesuffix(' (error)')}",
                 "model": model,
                 "input_state": {"trigger": trigger},
+                "trigger": trigger,
                 "_tools": [],
                 "_start_ms": previous_ms,
             }
@@ -296,6 +297,8 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
                 "event_type": "tool_call",
                 "node": node,
                 "parent": message_id,
+                # a tool call starts from whatever the LLM call that chose it reacted to
+                "trigger": call["trigger"],
                 "tool": {"name": name},
                 "input_state": {
                     k: v for k, v in tool_input.items() if k not in _COSMETIC_TOOL_ARGS.get(name, ())

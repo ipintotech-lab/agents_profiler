@@ -157,7 +157,7 @@ def test_llm_latency_excludes_idle_time_before_a_turn_starts_without_a_user_reco
 
 def test_every_event_carries_the_user_prompt_that_triggered_its_run():
     events = [TraceEvent.model_validate(r) for r in normalize_raw_json(_transcript())]
-    assert {e.trigger for e in events} == {"list files"}
+    assert {e.user_input for e in events} == {"list files"}
     # kept out of input_state so it doesn't split identical inputs
     assert all("list files" not in json.dumps(e.input_state) for e in events if e.event_type == "tool_call")
 
@@ -168,4 +168,12 @@ def test_compaction_summary_does_not_replace_the_triggering_prompt():
                     "timestamp": "2026-01-01T00:00:03.000Z",
                     "message": {"role": "user", "content": "This session is being continued..."}})
     events = [TraceEvent.model_validate(r) for r in normalize_raw_json(rows)]
-    assert {e.trigger for e in events} == {"list files"}
+    assert {e.user_input for e in events} == {"list files"}
+
+
+def test_claude_code_actions_start_from_what_the_llm_reacted_to():
+    events = [TraceEvent.model_validate(r) for r in normalize_raw_json(_transcript())]
+    first_llm, bash, second_llm = events
+    assert first_llm.trigger == "user_prompt"
+    assert bash.trigger == "user_prompt"  # chosen by the call that reacted to the prompt
+    assert second_llm.trigger == "Bash: ls"

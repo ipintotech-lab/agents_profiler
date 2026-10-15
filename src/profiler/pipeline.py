@@ -134,6 +134,7 @@ def run_pipeline(
                 "avg_latency_ms": s.avg_latency_ms,
                 "cost_component": round(s.cost_component, 4),
                 "score": round(s.score, 4),
+                "fingerprints": s.fingerprints,
             }
         )
         predictions[f"{s.agent}/{s.node}"] = s.classification

@@ -17,6 +17,11 @@ workflow) and a non-determinism penalty:
 DETERMINISTIC, and 0.5 for INSUFFICIENT_EVIDENCE -- an explicit "we
 don't know yet" midpoint, not a claim of safety.
 
+Fingerprints: each node also gets action-fingerprint evidence
+(``fingerprint.fingerprint_node``) -- its observations grouped by starting
+point and logical identity at three levels, with output distributions. It
+adds evidence alongside the classification; it doesn't change it.
+
 Recommend rule: a decision table over (classification, cost_component)
 per node, described in ``_recommend_for_node``.
 """
@@ -35,6 +40,7 @@ from .determinism import (
     DeterminismEvidence,
     classify,
 )
+from .fingerprint import fingerprint_node, reconstruct_contexts
 
 COST_WEIGHT = 0.5
 NONDETERMINISM_WEIGHT = 0.5
@@ -57,6 +63,7 @@ class ActionStats:
     avg_latency_ms: float
     cost_component: float = 0.0
     score: float = 0.0
+    fingerprints: dict | None = None
 
     @property
     def classification(self) -> Classification:
@@ -95,10 +102,16 @@ def mine(
     min_repeated_inputs: int = MIN_REPEATED_INPUTS,
     min_repeat_coverage: float = MIN_REPEAT_COVERAGE,
     min_repeated_observations: int = MIN_REPEATED_OBSERVATIONS,
+    with_fingerprints: bool = True,
 ) -> list[ActionStats]:
     """Stage 3: group a workflow's events by (agent, node) and classify
-    each node's determinism from repeated-input evidence."""
+    each node's determinism from repeated-input evidence. Callers that only
+    need classifications (threshold calibration, experiments) pass
+    ``with_fingerprints=False`` -- fingerprints don't depend on thresholds."""
     relevant = [e for e in events if e.workflow == workflow and e.agent]
+    # Starting points come from each run's step order, so reconstruct them
+    # before splitting the events up by node.
+    contexts = reconstruct_contexts(relevant) if with_fingerprints else {}
     groups: dict[tuple[str, str], list[TraceEvent]] = defaultdict(list)
     for e in relevant:
         groups[(e.agent, e.node)].append(e)
@@ -121,6 +134,7 @@ def mine(
                 evidence=evidence,
                 avg_cost=avg_cost,
                 avg_latency_ms=avg_latency_ms,
+                fingerprints=fingerprint_node(group_events, contexts) if with_fingerprints else None,
             )
         )
     return stats

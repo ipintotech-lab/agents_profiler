@@ -80,6 +80,7 @@ def _evaluate(
         min_repeated_inputs=min_repeated_inputs,
         min_repeat_coverage=min_repeat_coverage,
         min_repeated_observations=min_repeated_observations,
+        with_fingerprints=False,
     )
     predictions = {f"{s.agent}/{s.node}": s.classification for s in stats}
     report = validate(predictions, ground_truth)

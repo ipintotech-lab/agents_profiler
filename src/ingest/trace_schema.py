@@ -37,7 +37,11 @@ class TraceEvent(BaseModel):
     cost: float = 0.0
     result: str | None = None
     workflow_version: str | None = None
-    # What started this event's run -- e.g. the user's prompt. Context for
-    # reading the report, deliberately kept out of ``input_state`` so it
-    # doesn't split otherwise-identical inputs.
+    # The starting point of this action: what it reacted to (e.g. the result
+    # of a specific earlier step, or "user_prompt"). Part of the action's
+    # fingerprint; when absent it's derived as the previous step in the run.
     trigger: str | None = None
+    # The free-text request that started this event's run -- e.g. the user's
+    # prompt. Report context only: unique per run, so it stays out of both
+    # ``input_state`` and the fingerprint.
+    user_input: str | None = None
