@@ -184,6 +184,45 @@ The dashboard's "Hugging Face" tab does the same: paste a link, "List
 files", pick one, run. `/analyze` caps `hf_limit` at 500 records; a gated
 dataset needs a token in the form or `HF_TOKEN` set on the server.
 
+#### First time? Step by step
+
+1. **Open-access dataset** (e.g. FreeInference): nothing to set up. In the
+   dashboard open the "Hugging Face" tab, paste the dataset link, click
+   "List files", pick a file, set "Records" (start with 10) and click
+   "Run pipeline".
+2. **Gated dataset** (e.g. `cx-cmu/agent_trajectories` -- the dataset page
+   shows a form instead of the files):
+   1. Create a free account at https://huggingface.co/join and sign in.
+   2. On the dataset page, fill in the access form and submit. Some
+      datasets approve at once; others show "pending" until the authors
+      approve by hand.
+   3. Create a token at https://huggingface.co/settings/tokens: type
+      **Read** is simplest. A **fine-grained** token also works, but only
+      with "Read access to contents of all public gated repos you can
+      access" ticked.
+   4. Give the token to the profiler, one of:
+      - dashboard: paste it in the tab's "Token" field (it's sent only to
+        this server, for that request);
+      - command line: `export HF_TOKEN=hf_...`, or
+        `pip install huggingface_hub && hf auth login` (saves it to
+        `~/.cache/huggingface/token`, which is picked up automatically);
+      - deployed server: set `HF_TOKEN` in the Railway service's variables.
+3. **Which file?** One dataset often has several files. "List files" (or
+   `python -m ingest.huggingface <link> --list`) shows the ones the
+   profiler can read -- JSON / JSON Lines, `.zst` / `.gz` included;
+   Parquet isn't supported. Metadata files (manifests, reports, tool
+   inventories) are listed too but aren't traces -- pick a data file such
+   as `swebench.jsonl` or `release/<week>/traces/<day>.jsonl.zst`.
+4. **Errors:**
+   - *HTTP 401, "no Hugging Face token found"* -- step 2.4.
+   - *HTTP 403, "the token was rejected or hasn't been granted access"* --
+     access is still pending, the request was for another account, or a
+     fine-grained token lacks the gated-repos permission (step 2.3).
+     `hf auth whoami` shows which account a saved token belongs to.
+   - *"has N readable files; pick one"* -- choose a file (step 3).
+   - *"could not parse"* -- the file isn't in a trace format the profiler
+     knows; see the formats listed above.
+
 ## Setup
 
 ```bash

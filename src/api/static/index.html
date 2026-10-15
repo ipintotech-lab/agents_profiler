@@ -131,6 +131,7 @@
   details.glossary dl { display: grid; grid-template-columns: minmax(160px, 220px) 1fr; gap: 6px 16px; margin: 12px 0; font-size: 12.5px; }
   details.glossary dt { color: var(--ink); }
   details.glossary dd { color: var(--dim); }
+  details.glossary dd code { word-break: break-all; }
   .opt-type { color: var(--lime); font-size: 11px; letter-spacing: .04em; }
   .opt-desc { color: var(--dim); font-size: 12px; }
   tr.opt-head td { background: var(--panel2); padding-top: 12px; }
@@ -209,6 +210,23 @@
         </div>
       </div>
       <div class="hint" id="hfSummary">Gated datasets (like cx-cmu/agent_trajectories) need their conditions accepted on the dataset page, and a token with access.</div>
+      <details class="glossary">
+        <summary>First time? How to use this tab</summary>
+        <dl>
+          <dt>1. Paste a link</dt>
+          <dd>The dataset page's address, e.g. <code>https://huggingface.co/datasets/harvardMadsys/freeinference_agentic_trace</code>. A link to one file (…/blob/main/swebench.jsonl) works too.</dd>
+          <dt>2. List files, pick one</dt>
+          <dd>Only JSON / JSON Lines files are listed (.zst / .gz included; Parquet isn't supported). Pick a data file such as <code>swebench.jsonl</code> or <code>release/&lt;week&gt;/traces/&lt;day&gt;.jsonl.zst</code>, not a manifest or report.</dd>
+          <dt>3. Records</dt>
+          <dd>How many sessions / trajectories to read from the start of the file. Start with 10; the maximum is 500.</dd>
+          <dt>4. Gated datasets only</dt>
+          <dd>If the dataset page shows an access form: sign in at huggingface.co, submit the form (some datasets approve by hand, so it can show "pending"), then create a token at <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a> &mdash; type <b>Read</b>, or fine-grained with "Read access to contents of all public gated repos you can access" ticked &mdash; and paste it in the Token field. It's sent only to this server, for this request.</dd>
+          <dt>HTTP 401</dt>
+          <dd>No token was given &mdash; see step 4.</dd>
+          <dt>HTTP 403</dt>
+          <dd>The token has no access yet: the request is still pending, was made from another account, or a fine-grained token lacks the gated-repos permission.</dd>
+        </dl>
+      </details>
     </div>
 
     <div id="generatePanel" hidden>
