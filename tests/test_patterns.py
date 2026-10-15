@@ -118,3 +118,4 @@ def test_has_side_effect_reads_the_operation_name():
     for name in ("Read", "Grep", "fetch_error_log", "scheduler.get_logs", "get_table_schema",
                  "search__web_search", "assign_rep", "check_job_status"):
         assert not has_side_effect(name), name
+

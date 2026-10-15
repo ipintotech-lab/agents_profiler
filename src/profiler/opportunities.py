@@ -15,7 +15,12 @@ from ingest.trace_schema import TraceEvent
 from .mine import ActionStats
 
 MAX_PER_TYPE = 5
-MIN_BYPASS_OBSERVATIONS = 3
+# An LLM step that picks the same answer 80% of the time still looks
+# consistent 3 times in a row about half the time (0.8^3), but 5 in a row
+# only a third of the time (0.8^5). Measured on the POC's mock agents (10
+# seeds): 3 -> 5 cut "replace with a rule" false alarms at 500 lines from 5
+# to 1 and found every planted one from 2000 lines on, same as before.
+MIN_BYPASS_OBSERVATIONS = 5
 
 # A call that changes something (writes a ticket, sends a message, edits a
 # file) can return the same output for the same input every time and still
