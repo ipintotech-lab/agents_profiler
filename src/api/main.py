@@ -34,7 +34,8 @@ from bpop.result import BPOPResult
 from ingest import DEFAULT_DEMAND_MODEL, normalize_raw_json, parse_raw_text
 from ingest.huggingface import fetch_records, list_data_files, parse_hf_url
 from ingest.trace_schema import TraceEvent
-from profiler import run_pipeline, run_poc, run_sweep
+from profiler import history, run_pipeline, run_poc, run_sweep
+from profiler.behavior import OUTPUT_MATCHES, build_behavior
 from rawdata_gen import (
     generate_configured,
     verify_seed_range_reproducibility,
@@ -188,6 +189,8 @@ async def analyze(
     demand_model: str = Form(DEFAULT_DEMAND_MODEL),
     price_input_per_mtok: float | None = Form(None),
     price_output_per_mtok: float | None = Form(None),
+    output_match: str = Form("exact"),
+    keep_history: bool = Form(False),
 ) -> dict:
     """Run the uploaded trace file(s) through Observe -> Profile -> Mine ->
     Score -> Recommend for one workflow (auto-picked if not given).
@@ -212,7 +215,14 @@ async def analyze(
     opt in to estimating cost for LLM calls that have tokens but no
     recorded cost -- offered by the report's data notice when cost is
     missing.
+
+    ``output_match`` sets how the behavior section compares outputs
+    (exact / decision / normalized). ``keep_history`` also adds the events
+    to the behavior history (``GET /behavior``) -- opt-in, since it stores
+    them on the server.
     """
+    if output_match not in OUTPUT_MATCHES:
+        raise HTTPException(status_code=400, detail=f"output_match must be one of {', '.join(OUTPUT_MATCHES)}")
     if (price_input_per_mtok is None) != (price_output_per_mtok is None):
         raise HTTPException(status_code=400, detail="give both token prices (input and output) or neither")
     token_prices = None
@@ -265,11 +275,54 @@ async def analyze(
             ground_truth=parsed_ground_truth,
             demand_model=demand_model,
             token_prices=token_prices,
+            output_match=output_match,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     report["observe"]["files"] = file_summaries
+    if keep_history:
+        try:
+            kept = await run_in_threadpool(
+                history.add, events, history.dataset_label([f["name"] for f in file_summaries])
+            )
+        except ValueError as exc:
+            kept = {"error": str(exc)}
+        report["history"] = kept
     return report
+
+
+@app.get("/behavior")
+async def behavior(
+    workflow: str | None = None,
+    node: str | None = None,
+    where: str | None = None,
+    output_match: str = "exact",
+) -> dict:
+    """Behavior statistics over every event kept in history (see
+    ``/analyze``'s ``keep_history``) -- the same section the report shows
+    for one upload, growing with each kept upload. ``where`` (``field=value``)
+    keeps only events whose input has that value; ``node`` keeps one action."""
+    if output_match not in OUTPUT_MATCHES:
+        raise HTTPException(status_code=400, detail=f"output_match must be one of {', '.join(OUTPUT_MATCHES)}")
+    events = await run_in_threadpool(history.load, workflow)
+    if node:
+        events = [e for e in events if e.node == node]
+    try:
+        result = build_behavior(events, workflow, output_match, where)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {**result, "history": history.summary()}
+
+
+@app.get("/behavior/history")
+async def behavior_history() -> dict:
+    return history.summary()
+
+
+@app.delete("/behavior/history")
+async def behavior_history_clear(workflow: str | None = None, older_than_days: float | None = None) -> dict:
+    deleted = await run_in_threadpool(history.clear, workflow, older_than_days)
+    return {"deleted": deleted, **history.summary()}
 
 
 @app.post("/generate")

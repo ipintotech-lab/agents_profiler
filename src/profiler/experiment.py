@@ -503,11 +503,14 @@ def expected_vs_found(
             r for wf in _workflows(size_events) for r in compare_workflow(size_events, wf, size_manifest["ground_truth"])["rows"]
         ]
         hit, total = planted_found(size_rows)
+        region_hit, region_total = planted_found([r for r in size_rows if r["type"] == "DETERMINISTIC_REGION"])
         by_size.append(
             {
                 "sample_size": size,
                 "planted_found": hit,
                 "planted_total": total,
+                "regions_found": region_hit,
+                "regions_total": region_total,
                 "false_alarms": sum(1 for r in size_rows if not r["expected"] and r["found"]),
             }
         )

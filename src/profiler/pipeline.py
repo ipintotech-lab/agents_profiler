@@ -20,6 +20,7 @@ from ingest import (
 )
 from ingest.trace_schema import TraceEvent
 
+from .behavior import build_behavior
 from .calibration import calibrate_determinism_thresholds
 from .data_quality import check_data_quality, estimate_missing_costs
 from .determinism import Classification
@@ -64,9 +65,13 @@ def run_pipeline(
     demand_model: str = DEFAULT_DEMAND_MODEL,
     sensitivity_ratios: list[float] | None = None,
     token_prices: tuple[float, float] | None = None,
+    output_match: str = "exact",
 ) -> dict:
     """``token_prices`` -- $ per 1M input / output tokens -- opts in to
-    estimating cost for LLM calls that have tokens but no recorded cost."""
+    estimating cost for LLM calls that have tokens but no recorded cost.
+    ``output_match`` -- how the behavior section compares outputs (see
+    ``behavior.OUTPUT_MATCHES``); the determinism classification always
+    compares them exactly."""
     recorded = events
     estimated = None
     if token_prices is not None:
@@ -205,11 +210,14 @@ def run_pipeline(
         "recommend": recommendations,
         "repetition": repetition,
         "capacity_context": bpop_capacity_context,
+        "behavior": build_behavior(events, selected_workflow, output_match),
     }
 
     if has_expected(selected_workflow):
         # data from one of the mock agents: show what it was built to contain
-        compared = compare_workflow(events, selected_workflow, ground_truth, stats=mined, repetition=repetition)
+        compared = compare_workflow(
+            events, selected_workflow, ground_truth, stats=mined, repetition=repetition, behavior=report["behavior"]
+        )
         report["expected_vs_found"] = {
             **compared,
             "workflow": selected_workflow,

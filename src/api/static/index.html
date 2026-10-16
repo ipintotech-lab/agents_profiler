@@ -7,7 +7,7 @@
 <style>
   :root {
     --bg: #0c0f0d; --panel: #131915; --panel2: #182019; --line: #26302a;
-    --ink: #e8ede9; --dim: #8fa098; --faint: #5c6a63;
+    --ink: #f7faf8; --dim: #c3d0c9; --faint: #93a39b;
     --green: #4ade80; --lime: #a3e635; --amber: #fbbf24; --red: #f87171; --cyan: #67e8f9;
     --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
     --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
@@ -52,6 +52,9 @@
   button.ghost { background: transparent; border: 1px solid var(--line); color: var(--dim); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   .hint { color: var(--faint); font-size: 11px; margin-top: 2px; }
+  .tablenote { margin: 14px 0 6px; }
+  tr.explain td { color: var(--dim); font-size: 12px; padding-top: 0; border-top: none; }
+  th[title] { cursor: help; text-decoration: underline dotted var(--faint); }
   label .hint { text-transform: none; letter-spacing: 0; line-height: 1.45; margin-top: 4px; }
   .err { border-left: 2px solid var(--red); background: rgba(248,113,113,.06); color: var(--red); padding: 10px 14px; border-radius: 0 3px 3px 0; margin: 14px 0; font-size: 12.5px; display:none; }
 
@@ -220,7 +223,8 @@
           <li><b>01 Summary</b> &mdash; where the money goes and what to change: each repeat worth fixing, the evidence, the observed saving and the fix (cache it, use a rule, script the steps).</li>
           <li><b>02 Repetition</b> &mdash; the same steps in the same order across runs, and the same call with the same input.</li>
           <li><b>03 Nodes</b> &mdash; every distinct operation, costliest first, and whether the same input ever gave a different result.</li>
-          <li><b>04 Upload contents</b> &mdash; what was read: events, runs, workflows.</li>
+          <li><b>04 Behavior</b> &mdash; per action: cost (typical and worst 5%), consistency, models and versions, which input field decides the answer, and <b>regions</b>: input values where a simple rule gives the answer while the rest needs the LLM. Tick "Keep these events in history" to add uploads up over time.</li>
+          <li><b>05 Upload contents</b> &mdash; what was read: events, runs, workflows.</li>
         </ul>
       </details>
     </div>
@@ -268,7 +272,8 @@ hf auth login</pre>
             <li><b>01 Summary</b> &mdash; each repeat worth fixing, with the evidence and the fix.</li>
             <li><b>02 Repetition</b> &mdash; repeated step chains and repeated identical calls.</li>
             <li><b>03 Nodes</b> &mdash; every operation, costliest first.</li>
-            <li><b>04 Upload contents</b> &mdash; what was read.</li>
+            <li><b>04 Behavior</b> &mdash; per action: cost, consistency, models, the input field that decides the answer, and regions where a rule could answer.</li>
+            <li><b>05 Upload contents</b> &mdash; what was read.</li>
           </ul>
         </div>
       </details>
@@ -307,15 +312,16 @@ hf auth login</pre>
           <li><b>Pick the format and size</b> &mdash; more lines means more repeated inputs, so more findings show up (2,000 lines is a good start).</li>
           <li><b>Click "Generate"</b>, then <b>"Run pipeline"</b>.</li>
         </ol>
-        <p><b>What to expect</b> (agent trace events, 2,000 lines): the report finds most of what the analyzed agent was built to contain and none of its traps. The tab won't go below 1,000 lines: with less, inputs rarely repeat and the report finds almost nothing.</p>
+        <p><b>What to expect</b> (agent trace events, 2,000 lines): the report finds most of what the analyzed agent was built to contain and none of its traps. The CVE agent also has a planted <b>region</b> (its remediation is rule-like only for high/critical CVEs); section 04 shows it from about 5,000 lines. The tab won't go below 1,000 lines: with less, inputs rarely repeat and the report finds almost nothing.</p>
         <p style="margin-top:10px"><b>What the report shows</b> (after "Run pipeline"):</p>
         <ul>
           <li><b>01 Summary</b> &mdash; where the money goes and what to change: each repeat worth fixing, the evidence, the observed saving and the fix (cache it, use a rule, script the steps).</li>
           <li><b>02 Repetition</b> &mdash; the same steps in the same order across runs, and the same call with the same input.</li>
           <li><b>03 Nodes</b> &mdash; every distinct operation, costliest first, and whether the same input ever gave a different result.</li>
-          <li><b>04 Upload contents</b> &mdash; what was read: events, runs, workflows.</li>
-          <li><b>05 Expected vs. found</b> &mdash; only for the mock agents: each finding the agent was built to contain (and each trap it should not flag) next to what section 01 found, ✓ or ✗.</li>
-          <li><b>06 Validate</b> &mdash; each step's "same answer every time" call against the known answer.</li>
+          <li><b>04 Behavior</b> &mdash; per action: cost (typical and worst 5%), consistency, models and versions, which input field decides the answer, and <b>regions</b>: input values where a simple rule gives the answer while the rest needs the LLM. Tick "Keep these events in history" to add uploads up over time.</li>
+          <li><b>05 Upload contents</b> &mdash; what was read: events, runs, workflows.</li>
+          <li><b>06 Expected vs. found</b> &mdash; only for the mock agents: each finding the agent was built to contain (and each trap it should not flag) next to what sections 01 and 04 found, ✓ or ✗.</li>
+          <li><b>07 Validate</b> &mdash; each step's "same answer every time" call against the known answer.</li>
         </ul>
       </details>
       <div class="genrow">
@@ -423,7 +429,7 @@ hf auth login</pre>
           <li><b>trace size</b> (1,000 to 10,000 lines);</li>
           <li><b>capacity settings</b> (how peak demand is measured, headroom, cost and value overrides).</li>
         </ul>
-        <p><b>What to expect</b>: all 24 pass in under a minute. Each row shows whether the run finished, how long it took, and how many "same answer every time" calls matched the known answer. A FAIL means the pipeline crashed on that setting; the error is in the row.</p>
+        <p><b>What to expect</b>: all 24 pass in under a minute. Each row shows whether the run finished, how long it took, how many planted findings were found, the <b>regions</b> the behavior analysis found (and whether the planted one was among them; it shows up only in the larger traces), and how many "same answer every time" calls matched the known answer. A FAIL means the pipeline crashed on that setting; the error is in the row.</p>
       </details>
       <div class="genrow">
         <div class="field">
@@ -446,13 +452,14 @@ hf auth login</pre>
           <li><b>Test</b> those cut-offs on new datasets at growing sizes, from 100 to 10,000 trace lines, to find the point where more data stops changing the answers.</li>
           <li><b>Check</b> that the app's #1 "fix this first" pick is the same across datasets.</li>
           <li><b>Estimate</b> the money saved by caching (modeled, not measured).</li>
-          <li><b>Compare</b> what each agent was built to contain with what the app actually found (Phase 6).</li>
+          <li><b>Compare</b> what each agent was built to contain with what the app actually found (Phase 6), including the behavior analysis's <b>regions</b>: an action that is rule-like only for some inputs.</li>
         </ol>
         <p><b>What each agent was built to contain</b>. "Should flag: no" rows are traps: a finding there is a false alarm.</p>
         <table id="pocExpectedPlan"><thead><tr><th>agent</th><th>what</th><th>where</th><th>should flag</th><th>why</th></tr></thead><tbody><tr><td colspan="5" class="hint">loading…</td></tr></tbody></table>
         <p style="margin-top:12px"><b>What to expect when you run it</b> (default settings, about 15 seconds; measured on this version):</p>
         <ul>
-          <li><b>About 15 of 17</b> built-in findings found at 2,000 lines, 16 at 5,000 or more. Usually missed: <code>analyze_remediation</code> and <code>diagnose_failure</code>, which give a different answer only 20% of the time. That is subtle and needs more data to see.</li>
+          <li><b>About 15 of 18</b> built-in findings found at 2,000 lines, 17 at 5,000 or more. Usually missed: <code>analyze_remediation</code> and <code>diagnose_failure</code>, which give a different answer only 20% of the time. That is subtle and needs more data to see.</li>
+          <li><b>The region</b> in <code>analyze_remediation</code> (rule-like only for high/critical CVEs) shows up from 5,000 lines: it needs about 15 calls per severity before it beats chance.</li>
           <li><b>No traps flagged</b> from 2,000 lines on. With fewer lines an occasional false alarm can show up: a few repeats aren't enough to tell luck from a pattern.</li>
           <li><b>Around 15 "found, not planted"</b>. Mostly LLM steps that happened to give the same answer to the same input in this data, e.g. "cache <code>classify_severity</code>". They are real in the data, just not built in on purpose.</li>
           <li><b>Almost nothing below 500 lines</b>: every finding needs the same input to show up more than once.</li>
@@ -502,6 +509,20 @@ hf auth login</pre>
           <option value="p90">p90</option>
           <option value="p99">p99</option>
         </select>
+      </div>
+    </div>
+    <div class="row" id="behaviorRow">
+      <div class="field">
+        <label for="outputMatch">Compare outputs <span class="hint">for 04 Behavior: when two answers count as the same</span></label>
+        <select id="outputMatch">
+          <option value="exact" selected>exact (decision and result)</option>
+          <option value="decision">decision only</option>
+          <option value="normalized">normalized text (ignore case, numbers, ids)</option>
+        </select>
+      </div>
+      <div class="field grow">
+        <label>&nbsp;</label>
+        <label class="check"><input type="checkbox" id="keepHistory"> Keep these events in history <span class="hint">stored on this server so 04 Behavior can add up every kept upload; off by default</span></label>
       </div>
     </div>
     <div class="row" style="margin-bottom:0" id="submitRow">
@@ -555,7 +576,42 @@ hf auth login</pre>
     <p class="lede">For each agent, every distinct operation (node) it ran, and whether the same input ever produced a different result. <b>Cost</b> includes the LLM call that decided to run it, so a tool isn't shown as free. Click a node to see what started each action and how often the same request got the same answer. Terms are explained in <a href="#glossary">What the terms mean</a>.</p>
     <div id="agentsContainer"></div>
 
-    <h2><span class="idx">04</span>Upload contents</h2>
+    <div id="behaviorSection">
+    <h2><span class="idx">04</span>Behavior <span style="font-size:12px;color:var(--faint)">— under what conditions each action is predictable</span></h2>
+    <p class="takeaway" id="repBehaviorTakeaway"></p>
+    <p class="lede">For each action in this workflow: what it costs (average and the typical / worst-5% call), how consistent it is, which models ran it, and which <b>input fields decide its answer</b>. A <b>region</b> is an input value under which a simple rule gives the answer (e.g. "when <code>severity=critical</code>, the remediation follows <code>fix_available</code>") while the action's other inputs need the LLM. A region must beat the rest of the action by a significance test, so a small lucky slice doesn't count. It needs no repeated inputs, only enough calls per value. Outputs are compared as set in "Compare outputs".</p>
+    <div class="stats explained" id="repBehaviorStats"></div>
+    <p class="lede tablenote" id="repBehaviorRegionsNote"></p>
+     <table id="repBehaviorRegions"><thead><tr><th>action</th><th>when</th><th>rule</th><th class="num">right inside</th><th class="num">right elsewhere</th><th class="num">calls</th><th class="num">saving</th></tr></thead><tbody></tbody></table>
+    <p class="lede tablenote" id="repBehaviorNodesNote"></p>
+     <table id="repBehaviorNodes"><thead><tr><th>action</th><th class="num">calls</th><th class="num">cost avg · p50 · p95</th><th class="num">latency p50 · p95</th><th class="num">consistency</th><th>deciding input</th><th>models</th><th>versions</th><th>what it means</th></tr></thead><tbody></tbody></table>
+    <details class="poc-more"><summary>Input fields per action: how much each explains the answer</summary>
+      <p class="lede tablenote" id="repBehaviorFieldsNote"></p>
+       <table id="repBehaviorFields"><thead><tr><th>action</th><th>field</th><th class="num">values</th><th class="num">explains</th><th>most common answer per value</th></tr></thead><tbody></tbody></table>
+    </details>
+    <div class="gensummary" id="historyBox">
+      <div id="historySummary" class="hint">History: loading…</div>
+      <div class="row" style="margin:8px 0 0">
+        <button type="button" class="ghost" id="historyShowBtn">Show behavior from history</button>
+        <button type="button" class="ghost" id="historyClearBtn">Clear history</button>
+      </div>
+    </div>
+    <div id="histBehavior" hidden>
+      <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">From history <span style="font-size:12px;color:var(--faint)" id="histBehaviorScope"></span></h3>
+      <p class="takeaway" id="histBehaviorTakeaway"></p>
+      <div class="stats explained" id="histBehaviorStats"></div>
+      <p class="lede tablenote" id="histBehaviorRegionsNote"></p>
+     <table id="histBehaviorRegions"><thead><tr><th>action</th><th>when</th><th>rule</th><th class="num">right inside</th><th class="num">right elsewhere</th><th class="num">calls</th><th class="num">saving</th></tr></thead><tbody></tbody></table>
+      <p class="lede tablenote" id="histBehaviorNodesNote"></p>
+     <table id="histBehaviorNodes"><thead><tr><th>action</th><th class="num">calls</th><th class="num">cost avg · p50 · p95</th><th class="num">latency p50 · p95</th><th class="num">consistency</th><th>deciding input</th><th>models</th><th>versions</th><th>what it means</th></tr></thead><tbody></tbody></table>
+      <details class="poc-more"><summary>Input fields per action</summary>
+        <p class="lede tablenote" id="histBehaviorFieldsNote"></p>
+       <table id="histBehaviorFields"><thead><tr><th>action</th><th>field</th><th class="num">values</th><th class="num">explains</th><th>most common answer per value</th></tr></thead><tbody></tbody></table>
+      </details>
+    </div>
+    </div>
+
+    <h2><span class="idx">05</span>Upload contents</h2>
     <p class="lede">What's in the upload — no interpretation yet.</p>
     <div class="stats" id="observeStats"></div>
     <table id="workflowTable"><thead><tr><th>Workflow</th><th class="num">Events</th><th class="num">Runs</th></tr></thead><tbody></tbody></table>
@@ -588,8 +644,8 @@ hf auth login</pre>
     </details>
 
     <div id="repExpectedSection" hidden>
-      <h2><span class="idx">05</span>Expected vs. found <span style="font-size:12px;color:var(--faint)">— generated data only: what the mock agent was built to contain</span></h2>
-      <p class="lede">This workflow comes from one of the mock agents in <code>rawdata_gen</code>, so we know what it should contain: a lookup that always returns the same answer (cache it), an LLM choice a rule could make, a fixed chain of steps, an LLM step that varies for the same input (hidden state), and traps the report should <b>not</b> flag. Each row is one of those, next to whether section 01 listed it. ✓ = the report got it right, ✗ = missed or false alarm. Synthetic data, so a match doesn't prove it works on real agents; every ✗ is a concrete case to look at.</p>
+      <h2><span class="idx">06</span>Expected vs. found <span style="font-size:12px;color:var(--faint)">— generated data only: what the mock agent was built to contain</span></h2>
+      <p class="lede">This workflow comes from one of the mock agents in <code>rawdata_gen</code>, so we know what it should contain: a lookup that always returns the same answer (cache it), an LLM choice a rule could make, a fixed chain of steps, an LLM step that varies for the same input (hidden state), an action that is predictable only for some inputs (a region, section 04), and traps the report should <b>not</b> flag. Each row is one of those, next to whether section 01 or 04 listed it. ✓ = the report got it right, ✗ = missed or false alarm. Synthetic data, so a match doesn't prove it works on real agents; every ✗ is a concrete case to look at.</p>
       <p class="takeaway" id="repExpectedTakeaway"></p>
       <div class="stats explained" id="repExpectedStats"></div>
       <table id="repExpectedTable"><thead><tr><th>agent workflow</th><th>what</th><th>where</th><th>expected</th><th>found</th><th>why it was planted / evidence</th></tr></thead><tbody></tbody></table>
@@ -603,7 +659,7 @@ hf auth login</pre>
     </div>
 
     <div id="validationSection" style="display:none">
-      <h2><span class="idx">06</span>Validate <span style="font-size:12px;color:var(--faint)">— determinism calls vs. the known answer (generated data only)</span></h2>
+      <h2><span class="idx">07</span>Validate <span style="font-size:12px;color:var(--faint)">— determinism calls vs. the known answer (generated data only)</span></h2>
       <p class="lede">Generated data only, where we know whether each step really gives the same answer every time. Each row: what the step was built to do, what the app concluded, and whether that's right. <b>"Not judged: too few repeats"</b> is not an error: the app only calls a step after seeing the same input repeat, so on small data it holds back instead of guessing. <b>Coverage</b> = the share of steps it judged; generate more lines to raise it. Accuracy / precision / recall count only the judged steps.</p>
       <div class="stats" id="validationStats"></div>
       <table id="validationTable"><thead><tr><th>Node</th><th class="num">True determinism_rate</th><th>Expected</th><th>Predicted</th><th>Outcome</th></tr></thead><tbody></tbody></table>
@@ -622,7 +678,7 @@ hf auth login</pre>
     <p class="takeaway" id="sweepTakeaway"></p>
 
     <h2><span class="idx">02</span>By setting <span style="font-size:12px;color:var(--faint)">— one change at a time from the baseline</span></h2>
-    <p class="lede">Each row is fresh sample data with one setting changed (same seed everywhere), run through the whole pipeline. <b>Planted found</b> = of what the analyzed agent was built to contain, how many the report listed (✓ when all, and no trap flagged). <b>Calls right</b> = "same answer every time" calls that match the known answer; <b>too few repeats</b> = steps whose inputs didn't repeat enough to call. <b>Capacity</b> is the advanced B-POP result (x* = LLM-call capacity to provision).</p>
+    <p class="lede">Each row is fresh sample data with one setting changed (same seed everywhere), run through the whole pipeline. <b>Planted found</b> = of what the analyzed agent was built to contain, how many the report listed (✓ when all, and no trap flagged). <b>Regions</b> = actions that are rule-like only for some inputs (report section 04); "planted ✓" when the one built into the CVE agent was found. <b>Calls right</b> = "same answer every time" calls that match the known answer; <b>too few repeats</b> = steps whose inputs didn't repeat enough to call. <b>Capacity</b> is the advanced B-POP result (x* = LLM-call capacity to provision).</p>
     <div id="sweepGroups"></div>
     <pre class="code" id="sweepNote"></pre>
   </div>
@@ -635,7 +691,7 @@ hf auth login</pre>
     <p class="takeaway" id="pocTakeaway"></p>
 
     <h2><span class="idx">02</span>Expected vs. found <span style="font-size:12px;color:var(--faint)">— Phase 6: what each agent was built to contain next to what the report found</span></h2>
-    <p class="lede">Each mock agent was written to contain specific things: a lookup that always returns the same answer (cache it), an LLM choice that a rule could make, a fixed chain of steps an LLM planner walks through, an LLM step that varies for the same input (hidden state), and traps the report should <em>not</em> flag. This table puts that plan next to what the report found on the same data. They won't match exactly — synthetic agents are simpler than real ones — but every miss and every false alarm is a concrete case to look at.</p>
+    <p class="lede">Each mock agent was written to contain specific things: a lookup that always returns the same answer (cache it), an LLM choice that a rule could make, a fixed chain of steps an LLM planner walks through, an LLM step that varies for the same input (hidden state), an action that is rule-like only for some inputs (a region, from the behavior analysis), and traps the report should <em>not</em> flag. This table puts that plan next to what the report found on the same data. They won't match exactly — synthetic agents are simpler than real ones — but every miss and every false alarm is a concrete case to look at.</p>
     <div class="stats explained" id="pocExpectedStats"></div>
     <table id="pocExpectedTable"><thead><tr><th>agent workflow</th><th>what</th><th>where</th><th>expected</th><th>found</th><th>why it was planted / evidence</th></tr></thead><tbody></tbody></table>
     <details class="poc-more"><summary>Found but not planted <span class="hint" id="pocUnplannedCount"></span></summary>
@@ -644,7 +700,7 @@ hf auth login</pre>
     <details class="poc-more" id="pocDeterminismMore"><summary>Determinism per node: expected vs. classified</summary>
       <table id="pocDeterminismTable"><thead><tr><th>node</th><th class="num">planted rate</th><th>expected</th><th>classified</th><th>outcome</th></tr></thead><tbody></tbody></table>
     </details>
-    <table id="pocExpectedCurve" style="margin-top:12px"><thead><tr><th class="num">sample size</th><th class="num">planted findings found</th><th class="num">false alarms</th></tr></thead><tbody></tbody></table>
+    <table id="pocExpectedCurve" style="margin-top:12px"><thead><tr><th class="num">sample size</th><th class="num">planted findings found</th><th class="num">of which regions</th><th class="num">false alarms</th></tr></thead><tbody></tbody></table>
     <pre class="code" id="pocExpectedNote"></pre>
 
     <h2><span class="idx">03</span>Calibration <span style="font-size:12px;color:var(--faint)">— Phase 1: picking the "same answer every time" cut-offs</span></h2>
@@ -738,6 +794,7 @@ const sweepPanel = document.getElementById('sweepPanel');
 const pocPanel = document.getElementById('pocPanel');
 const formulaRow = document.getElementById('formulaRow');
 const submitRow = document.getElementById('submitRow');
+const behaviorRow = document.getElementById('behaviorRow');
 const sweepReportEl = document.getElementById('sweepReport');
 const pocReportEl = document.getElementById('pocReport');
 let lastSweepResult = null;
@@ -764,6 +821,7 @@ function setMode(m) {
   pocPanel.hidden = m !== 'poc';
   if (m === 'poc') loadPocExpected();
   formulaRow.hidden = m === 'sweep' || m === 'poc';
+  behaviorRow.hidden = m === 'sweep' || m === 'poc';
   submitRow.hidden = m === 'sweep' || m === 'poc';
   pipelineEl.style.display = (m === 'sweep' || m === 'poc') ? 'none' : '';
   reportEl.style.display = (m === 'sweep' || m === 'poc') ? 'none' : (reportEl.dataset.hasRun ? 'block' : 'none');
@@ -1065,6 +1123,15 @@ const SWEEP_GROUPS = {
   formula_override: ['Capacity settings', 'headroom and cost / value overrides (advanced B-POP settings)'],
 };
 
+function regionTakeaway(rows) {
+  const graded = rows.filter(r => r.region_found != null);
+  if (!graded.length) return '';
+  const found = graded.filter(r => r.region_found);
+  const smallest = found.reduce((a, r) => (!a || r.num_events < a.num_events ? r : a), null);
+  return ` The planted region (analyze_remediation is rule-like only for high/critical CVEs) was found in ${found.length} of ${graded.length} settings` +
+    (smallest ? `; the smallest trace that showed it had ${smallest.num_events} lines.` : ': it needs more calls per severity than these traces have.');
+}
+
 function renderSweep(data) {
   const ok = data.results.filter(r => r.passed);
   const graded = ok.filter(r => r.planted_total);
@@ -1082,7 +1149,8 @@ function renderSweep(data) {
   const misses = graded.filter(r => r.planted_found < r.planted_total).map(r => r.label);
   document.getElementById('sweepTakeaway').textContent =
     (failed.length ? `${failed.length} setting${failed.length === 1 ? '' : 's'} crashed: ${failed.map(r => r.label).join(', ')}. ` : 'Every setting ran to the end. ') +
-    (misses.length ? `Some planted findings were missed at ${misses.join(', ')}: usually too few repeated inputs at that setting, not a crash.` : 'Every graded setting found all planted findings.');
+    (misses.length ? `Some planted findings were missed at ${misses.join(', ')}: usually too few repeated inputs at that setting, not a crash.` : 'Every graded setting found all planted findings.') +
+    regionTakeaway(ok);
   const pct = v => v != null ? `${(v * 100).toFixed(0)}%` : '—';
   const groups = [...new Set(data.results.map(r => r.group))];
   document.getElementById('sweepGroups').innerHTML = groups.map(g => {
@@ -1098,15 +1166,16 @@ function renderSweep(data) {
         <td>${r.selected_workflow ? esc(r.selected_workflow) : '—'}</td>
         <td class="num">${r.num_events ?? '—'}</td>
         ${planted}
+        <td class="${r.region_found == null ? '' : r.region_found ? 'verdict-ok' : 'verdict-miss'}">${r.regions == null ? '—' : `${r.regions}${r.region_found == null ? '' : r.region_found ? ', planted ✓' : ', planted ✗'}`}</td>
         <td class="num">${pct(r.accuracy)}</td>
         <td class="num">${pct(r.insufficient_rate)}</td>
         <td class="num">${r.x && r.x.x != null ? r.x.x.toFixed(1) : '—'}</td>
         <td class="num">${r.elapsed_ms != null ? `${(r.elapsed_ms / 1000).toFixed(1)} s` : '—'}</td>
-      </tr>${r.error ? `<tr><td colspan="9" class="bad">${esc(r.error)}</td></tr>` : ''}`;
+      </tr>${r.error ? `<tr><td colspan="10" class="bad">${esc(r.error)}</td></tr>` : ''}`;
     }).join('');
     return `
     <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">${esc(title)} <span style="font-size:12px;color:var(--faint)">— ${esc(hint)}</span></h3>
-    <table><thead><tr><th>setting</th><th>status</th><th>analyzed workflow</th><th class="num">trace lines</th><th>planted found</th><th class="num">calls right</th><th class="num">too few repeats</th><th class="num">capacity x*</th><th class="num">time</th></tr></thead><tbody>${rows}</tbody></table>`;
+    <table><thead><tr><th>setting</th><th>status</th><th>analyzed workflow</th><th class="num">trace lines</th><th>planted found</th><th>regions</th><th class="num">calls right</th><th class="num">too few repeats</th><th class="num">capacity x*</th><th class="num">time</th></tr></thead><tbody>${rows}</tbody></table>`;
   }).join('');
   document.getElementById('sweepNote').textContent =
     'Each row grades only the workflow the report analyzes (the one with the most events). The POC tab grades every agent across many seeds; this tab only checks the pipeline holds up across settings.';
@@ -1145,6 +1214,7 @@ const OPPORTUNITY_LABELS = {
   CACHE_RESULT: 'cache the result',
   CONDITIONAL_LLM_BYPASS: 'replace the LLM call with a rule',
   REVIEW_HIDDEN_STATE: 'hidden state',
+  DETERMINISTIC_REGION: 'rule for some inputs (region)',
 };
 
 let pocExpectedLoaded = false;
@@ -1160,7 +1230,7 @@ async function loadPocExpected() {
       <tr>
         <td>${i === 0 ? `<b>${esc(a.agent)}</b><div class="hint">${esc(a.workflow)}</div>` : ''}</td>
         <td>${esc(OPPORTUNITY_LABELS[f.type] || f.type)}</td>
-        <td><code>${esc(f.steps ? f.steps.join(' → ') : f.node)}</code></td>
+        <td><code>${esc(f.steps ? f.steps.join(' → ') : f.node)}</code>${f.field ? `<div class="hint">by ${esc(f.field)}</div>` : ''}</td>
         <td>${f.expect ? 'yes' : '<b>no</b> (trap)'}</td>
         <td>${esc(f.why)}</td>
       </tr>`)).join('');
@@ -1187,6 +1257,8 @@ function renderExpected(p6, prefix) {
       'traps the report flagged anyway — e.g. "cache" on a call that writes a ticket or sends a message.') +
     statCardExplained(s.unplanned, 'found, not planted',
       'other findings nobody planted: often real (runs that happened to share an input), sometimes the profiler over-reaching.') +
+    (s.regions_total ? statCardExplained(`${s.regions_found}/${s.regions_total}`, 'regions found',
+      `actions built to be rule-like only for some inputs, found by the behavior analysis (report section 04)${s.unplanned_regions ? `; ${s.unplanned_regions} more found, not planted` : ''}. They need ~15+ calls per input value, so usually 5,000+ lines.`) : '') +
     (s.determinism_nodes ? statCardExplained(`${s.determinism_agree}/${s.determinism_nodes}`, 'determinism calls correct',
       `nodes classified the way they were built; ${s.determinism_insufficient} more had too few repeated inputs to call either way.`) : '');
   $('ExpectedTable').tBodies[0].innerHTML = p6.rows.map(r => `
@@ -1219,7 +1291,7 @@ function renderExpected(p6, prefix) {
   const detMore = $('DeterminismMore');
   if (detMore) detMore.hidden = !p6.determinism.length;
   if ($('ExpectedCurve')) $('ExpectedCurve').tBodies[0].innerHTML = p6.by_sample_size.map(r => `
-    <tr><td class="num">${r.sample_size}</td><td class="num">${r.planted_found}/${r.planted_total}</td><td class="num">${r.false_alarms}</td></tr>`).join('');
+    <tr><td class="num">${r.sample_size}</td><td class="num">${r.planted_found}/${r.planted_total}</td><td class="num">${r.regions_total ? `${r.regions_found}/${r.regions_total}` : '—'}</td><td class="num">${r.false_alarms}</td></tr>`).join('');
   $('ExpectedNote').textContent = p6.by_sample_size
     ? `${p6.note}\n\nThe last table reruns the comparison at each sample size (seed ${p6.seed}): most findings need repeated inputs, so they only appear once there is enough data.`
     : p6.note;
@@ -1458,6 +1530,8 @@ form.addEventListener('submit', async (ev) => {
   if (uv !== '') fd.append('unit_value', uv);
   if (ch !== '') fd.append('capacity_headroom', ch);
   if (dm !== '') fd.append('demand_model', dm);
+  fd.append('output_match', document.getElementById('outputMatch').value);
+  if (document.getElementById('keepHistory').checked) fd.append('keep_history', 'true');
   if (tokenPrices) {
     fd.append('price_input_per_mtok', tokenPrices.input);
     fd.append('price_output_per_mtok', tokenPrices.output);
@@ -1482,6 +1556,151 @@ form.addEventListener('submit', async (ev) => {
   }
 });
 
+// 04 Behavior: one upload (prefix 'rep') or everything kept in history ('hist').
+const OUTPUT_MATCH_LABELS = { exact: 'exact outputs', decision: 'decisions only', normalized: 'normalized text' };
+
+function regionRuleText(r) {
+  if (r.rule_field == null) return `always <b>${esc(Object.values(r.rule)[0])}</b>`;
+  return `follows <code>${esc(r.rule_field)}</code>: ` +
+    Object.entries(r.rule).map(([k, v]) => `${esc(k)} → <b>${esc(v)}</b>`).join(', ');
+}
+
+const BEHAVIOR_NOTES = {
+  regions: '<b>Regions</b>: each row is a slice of one action’s calls (<i>when</i>) where a fixed rule gives the same answer the LLM gave. <i>Right inside</i> is how often the rule matches the LLM in that slice; <i>right elsewhere</i> is how often the best simple rule matches on the action’s other calls. A big gap means: route that slice to the rule, keep the LLM for the rest. <i>Saving</i> is what the LLM calls in the slice cost in this data.',
+  nodes: '<b>Actions</b>: one row per step of the workflow. <i>p50</i> is the typical call, <i>p95</i> the slowest / priciest 5%. <i>Consistency</i> counts only inputs seen more than once: how often the same input got the same answer. <i>Deciding input</i> is the one field that explains the answer by itself (or the best one, with its share). The last column says what to do with it.',
+  fields: 'For each action, the input fields with 2–12 values, ranked by how much of the answer they explain (100% = knowing the field tells you the answer). The last column shows the most common answer for each value and how often it was given. A field near 100% is a lookup table; a value at 100% while others are mixed is a region.',
+};
+const BEHAVIOR_TIPS = {
+  BehaviorRegions: ['the workflow step', 'the input value that defines the slice', 'the rule that reproduces the answer inside the slice', 'share of calls in the slice the rule gets right', 'share of the other calls the best simple rule gets right', 'LLM calls in the slice', 'LLM cost of those calls in this data'],
+  BehaviorNodes: ['the workflow step (LLM = it calls a model)', 'how many times it ran', 'cost per call: average, typical (p50), worst 5% (p95)', 'time per call: typical (p50), worst 5% (p95)', 'same input → same answer, over inputs seen more than once', 'input field that explains the answer', 'models seen (calls, consistency)', 'agent versions seen', 'what to do with this action'],
+  BehaviorFields: ['the workflow step', 'the input field', 'distinct values seen', 'how much of the answer the field explains (information gain)', 'most common answer per value: share of calls'],
+};
+function regionExplain(r) {
+  const pct = v => Math.round(v * 100) + '%';
+  return `→ When <code>${esc(r.where)}</code>, ${esc(r.node)} can skip the LLM: ${regionRuleText(r)}. That matched the LLM in ${pct(r.rule_rate)} of ${r.observations} calls; on the other ${esc(r.field)} values the best simple rule is right only ${pct(r.rest_rate)}, so keep the LLM there. Chance of a gap this big by luck: ${r.p_value < 0.0001 ? 'p < 0.0001' : 'p = ' + r.p_value.toFixed(4)}.`;
+}
+function nodeMeaning(n) {
+  const c = n.consistency.rate;
+  if (n.regions.length) return `predictable only when ${n.regions.map(r => esc(r.where)).join(' or ')}: use a rule there, the LLM elsewhere`;
+  if (n.deciding_field) return `answer follows <code>${esc(n.deciding_field)}</code>: a lookup table could replace it${n.is_llm ? ' and the LLM call' : ''}`;
+  if (c == null) return 'no input seen twice yet: needs more data to judge';
+  if (c >= 0.95) return n.is_llm ? 'same input → same answer: cache it or script it' : 'same input → same answer: safe to cache if it has no side effect';
+  if (c >= 0.8) return 'mostly consistent: something not in the inputs changes the answer sometimes';
+  return n.is_llm ? 'answers vary for the same input: keep the LLM' : 'results vary for the same input: depends on outside state';
+}
+function renderBehavior(b, prefix) {
+  const $ = id => document.getElementById(prefix + id);
+  if (!b) return;
+  const s = b.summary;
+  const usd = v => v ? money(v) : '—';
+  const regions = b.nodes.flatMap(n => n.regions.map(r => ({ ...r, node: n.node })));
+  $('BehaviorStats').innerHTML =
+    statCardExplained(s.nodes, 'actions', `distinct actions in ${esc(b.workflow || 'all workflows')}${b.where ? `, where ${esc(b.where)}` : ''}; ${b.num_events} calls, outputs compared as ${OUTPUT_MATCH_LABELS[b.output_match] || b.output_match}.`) +
+    statCardExplained(s.regions, 'regions', 'input values under which a simple rule gives the answer while the rest of the action needs the LLM.') +
+    statCardExplained(usd(s.region_saving), 'LLM cost in regions', 'what the LLM calls inside the regions cost in this data: a rule could answer them instead. Observed, not forecast.') +
+    statCardExplained(s.deciding_fields, 'decided by one field', 'actions whose answer one input field explains (≥95%): candidates for a lookup table.') +
+    statCardExplained(`${s.models} · ${s.versions}`, 'models · versions', 'distinct models and agent versions seen; the table splits cost and consistency by each.');
+  const top = regions[0];
+  $('BehaviorTakeaway').textContent = !b.nodes.length ? 'No calls to describe.'
+    : regions.length
+      ? `${regions.length} region${regions.length === 1 ? '' : 's'}: e.g. ${top.node} when ${top.where} is right ${Math.round(top.rule_rate * 100)}% of the time with a rule, ${Math.round(top.rest_rate * 100)}% elsewhere. Those calls could skip the LLM; the rest still need it.`
+      : 'No region found: no input value makes an action predictable where the rest is not. Regions need about 15+ calls per value, so small uploads rarely show one.';
+  $('BehaviorRegions').hidden = !regions.length;
+  $('BehaviorRegionsNote').hidden = !regions.length;
+  $('BehaviorRegionsNote').innerHTML = BEHAVIOR_NOTES.regions;
+  $('BehaviorNodesNote').innerHTML = BEHAVIOR_NOTES.nodes;
+  $('BehaviorFieldsNote').innerHTML = BEHAVIOR_NOTES.fields;
+  for (const [tbl, tips] of Object.entries(BEHAVIOR_TIPS))
+    [...$(tbl).tHead.rows[0].cells].forEach((th, i) => { if (tips[i]) th.title = tips[i]; });
+  $('BehaviorRegions').tBodies[0].innerHTML = regions.map(r => `
+    <tr>
+      <td><code>${esc(r.node)}</code></td>
+      <td><code>${esc(r.where)}</code></td>
+      <td>${regionRuleText(r)}</td>
+      <td class="num">${Math.round(r.rule_rate * 100)}%</td>
+      <td class="num">${Math.round(r.rest_rate * 100)}%</td>
+      <td class="num">${r.observations}</td>
+      <td class="num">${usd(r.saving)}</td>
+    </tr>
+    <tr class="explain"><td colspan="7">${regionExplain(r)}</td></tr>`).join('');
+  const split = list => list.length > 1
+    ? list.map(m => `${esc(m.name)} <span class="hint">${m.observations}${m.consistency.rate != null ? `, ${Math.round(m.consistency.rate * 100)}%` : ''}</span>`).join('<br>')
+    : list.length ? esc(list[0].name) : '—';
+  $('BehaviorNodes').tBodies[0].innerHTML = b.nodes.map(n => {
+    const c = n.consistency;
+    const field = n.deciding_field || (n.fields[0] && n.fields[0].importance >= 0.5 ? `${n.fields[0].field} (${Math.round(n.fields[0].importance * 100)}%)` : null);
+    return `
+    <tr>
+      <td><code>${esc(n.node)}</code>${n.is_llm ? ' <span class="hint">LLM</span>' : ''}${n.regions.length ? ` <span class="good">${n.regions.length} region${n.regions.length === 1 ? '' : 's'}</span>` : ''}</td>
+      <td class="num">${n.observations}</td>
+      <td class="num">${n.cost.total ? `${money(n.cost.avg)} · ${money(n.cost.p50)} · ${money(n.cost.p95)}` : '—'}</td>
+      <td class="num">${n.latency_ms.p95 ? `${Math.round(n.latency_ms.p50)} · ${Math.round(n.latency_ms.p95)} ms` : '—'}</td>
+      <td class="num">${c.rate != null ? `${Math.round(c.rate * 100)}% <span class="hint">${c.repeated_inputs} repeated</span>` : '<span class="hint">no repeats</span>'}</td>
+      <td>${field ? `<code>${esc(field)}</code>` : '—'}</td>
+      <td>${split(n.models)}</td>
+      <td>${split(n.versions)}</td>
+      <td class="hint">${nodeMeaning(n)}</td>
+    </tr>`;
+  }).join('');
+  $('BehaviorFields').tBodies[0].innerHTML = b.nodes.flatMap(n => n.fields.map((f, i) => `
+    <tr>
+      <td>${i === 0 ? `<code>${esc(n.node)}</code>` : ''}</td>
+      <td><code>${esc(f.field)}</code></td>
+      <td class="num">${f.values}</td>
+      <td class="num">${Math.round(f.importance * 100)}%</td>
+      <td class="hint">${f.slices.map(sl => `${esc(sl.value)} → ${esc(sl.dominant_output)} (${Math.round(sl.dominant_rate * 100)}% of ${sl.observations})`).join('; ')}</td>
+    </tr>`)).join('') || '<tr><td colspan="5" class="hint">No input field with few enough values (2–12) and enough calls per value to rank.</td></tr>';
+}
+
+async function loadHistorySummary() {
+  const el = document.getElementById('historySummary');
+  try {
+    const res = await fetch('/behavior/history');
+    const h = await res.json();
+    if (!res.ok) throw new Error(h.detail || res.status);
+    el.innerHTML = h.total
+      ? `<b>History</b>: ${h.total} events kept from ${h.workflows.map(w => `${esc(w.workflow)} (${w.events} events, ${w.uploads} upload${w.uploads === 1 ? '' : 's'})`).join(', ')}. Behavior from history adds up every kept upload, so regions show up once enough calls accumulate.`
+      : '<b>History</b>: empty. Tick "Keep these events in history" before "Run pipeline" to start adding uploads up.';
+    document.getElementById('historyShowBtn').disabled = !h.total;
+    document.getElementById('historyClearBtn').disabled = !h.total;
+  } catch (e) {
+    el.textContent = `History: couldn't load (${e.message || e}).`;
+  }
+}
+
+document.getElementById('historyShowBtn').addEventListener('click', async () => {
+  const wf = (document.getElementById('workflow').value || (lastReport && lastReport.observe.selected_workflow) || '');
+  const params = new URLSearchParams({ output_match: document.getElementById('outputMatch').value });
+  if (wf) params.set('workflow', wf);
+  try {
+    const res = await fetch(`/behavior?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Could not read history.');
+    document.getElementById('histBehavior').hidden = false;
+    document.getElementById('histBehaviorScope').textContent = `— ${wf || 'all workflows'}, ${data.num_events} kept calls`;
+    renderBehavior(data, 'hist');
+  } catch (e) {
+    showErr(e.message || String(e));
+  }
+});
+
+const historyClearBtn = document.getElementById('historyClearBtn');
+historyClearBtn.addEventListener('click', async () => {
+  // two clicks, no browser dialog: the first arms the button
+  if (!historyClearBtn.dataset.armed) {
+    historyClearBtn.dataset.armed = '1';
+    historyClearBtn.textContent = 'Click again to delete all kept events';
+    setTimeout(() => { delete historyClearBtn.dataset.armed; historyClearBtn.textContent = 'Clear history'; }, 4000);
+    return;
+  }
+  delete historyClearBtn.dataset.armed;
+  historyClearBtn.textContent = 'Clear history';
+  const res = await fetch('/behavior/history', { method: 'DELETE' });
+  if (!res.ok) { showErr('Could not clear history.'); return; }
+  document.getElementById('histBehavior').hidden = true;
+  loadHistorySummary();
+});
+
 function showErr(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
 
 function statCard(value, label) {
@@ -1492,7 +1711,9 @@ function statCardExplained(value, label, hint) {
   return `<div class="stat"><div class="v">${value}</div><div class="k">${label}</div><div class="d">${hint}</div></div>`;
 }
 
+let lastReport = null;
 function render(data) {
+  lastReport = data;
   reportEl.style.display = 'block';
   reportEl.dataset.hasRun = '1';
 
@@ -1661,6 +1882,9 @@ function render(data) {
         <div class="derivation">${esc(r.derivation)}</div>
       </div>
     </div>`).join('');
+
+  renderBehavior(data.behavior, 'rep');
+  loadHistorySummary();
 
   // Expected vs. found (only for workflows from the mock agents)
   const evf = data.expected_vs_found;

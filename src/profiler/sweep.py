@@ -123,6 +123,10 @@ def run_sweep(seed: int = 1) -> dict:
             elapsed_ms = (time.monotonic() - started) * 1000
             validation = report.get("validation")
             expected = (report.get("expected_vs_found") or {}).get("summary")
+            region_rows = [
+                r for r in (report.get("expected_vs_found") or {}).get("rows", [])
+                if r["type"] == "DETERMINISTIC_REGION" and r["expected"]
+            ]
             row.update(
                 {
                     "passed": True,
@@ -140,6 +144,9 @@ def run_sweep(seed: int = 1) -> dict:
                     "planted_found": expected["planted_found"] if expected else None,
                     "planted_total": expected["planted_total"] if expected else None,
                     "false_alarms": expected["false_alarms"] if expected else None,
+                    "regions": report["behavior"]["summary"]["regions"],
+                    # the planted "deterministic only for some inputs" region
+                    "region_found": all(r["found"] for r in region_rows) if region_rows else None,
                 }
             )
         except Exception as exc:  # noqa: BLE001 -- a sweep must survive and report every case's own failure
@@ -161,6 +168,8 @@ def run_sweep(seed: int = 1) -> dict:
                     "planted_found": None,
                     "planted_total": None,
                     "false_alarms": None,
+                    "regions": None,
+                    "region_found": None,
                 }
             )
         results.append(row)

@@ -163,7 +163,8 @@ def test_run_poc_full_default_run_matches_measured_result():
     assert result["conclusion"] == "NOT YET SUPPORTED"
     assert result["phase3_recommendation_stability"]["top1_stability"] == 1.0
     p6 = result["phase6_expected_vs_found"]["summary"]
-    assert (p6["planted_found"], p6["planted_total"], p6["false_alarms"]) == (16, 17, 0)
+    # 18th planted finding: the DETERMINISTIC_REGION in analyze_remediation
+    assert (p6["planted_found"], p6["planted_total"], p6["false_alarms"]) == (17, 18, 0)
 
 
 def test_poc_run_endpoint_returns_full_report():

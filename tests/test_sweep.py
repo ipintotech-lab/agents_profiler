@@ -33,6 +33,10 @@ def test_run_sweep_all_cases_pass_and_report_timing():
         # every case analyzes one of the mock agents, so it is graded against what it was built to contain
         assert 0 < row["planted_found"] <= row["planted_total"]
         assert row["false_alarms"] == 0
+        assert row["regions"] >= 0 and row["region_found"] in (True, False)
+    # the planted region needs ~15 calls per severity: present in the largest trace
+    largest = max(result["results"], key=lambda r: r["num_events"])
+    assert largest["region_found"], largest
 
 
 def test_run_sweep_endpoint_returns_sweep_report():

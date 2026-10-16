@@ -248,6 +248,8 @@ def test_run_pipeline_compares_generated_data_with_what_the_agent_was_built_to_c
     assert summary["planted_total"] == sum(1 for r in evf["rows"] if r["expected"])
     assert summary["planted_found"] == summary["planted_total"]  # all 5 show up at 2000 lines
     assert summary["false_alarms"] == 0
+    assert report["behavior"]["workflow"] == "lead-qualification"
+    assert {n["node"] for n in report["behavior"]["nodes"]} >= {"score_lead", "write_outreach"}
     # ground truth was sent, so the per-node determinism table is filled too
     assert summary["determinism_nodes"] == len(evf["determinism"]) > 0
 

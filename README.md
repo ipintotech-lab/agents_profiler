@@ -80,7 +80,9 @@ controls — those remain out of scope per the design doc above.
   edit, ...; `has_side_effect`), since skipping it would skip the change.
   The dashboard leads with that
   summary, then repetition, then nodes (costliest first); capacity planning
-  and the per-node score list are folded under "advanced".
+  and the per-node score list are folded under "advanced". `behavior.py`
+  builds the report's `behavior` section (see "Behavior"), and `history.py`
+  keeps events across uploads for it.
 - `src/rawdata_gen/` — synthetic trace-data generator, merged in from
   [`agents_profile_rawdata_gen`](https://github.com/ipintotech-lab/agents_profile_rawdata_gen)
   and developed here now; `generate_configured(agent_count,
@@ -194,15 +196,53 @@ The full list, with the reason for each, is `EXPECTED_FINDINGS` in
 Each generated run also records the request that started it (`user_input`,
 e.g. "Remediate CVE-2026-4867"), as real traces do.
 
+The CVE agent also plants a **region**: `analyze_remediation` follows
+`fix_available` every time for high/critical CVEs and flips 40% of the time
+for low/medium (averaging the 80% in `DETERMINISM_PROFILE`). The extra flips
+use a per-run RNG, so every other node's data is unchanged.
+
 When the analyzed workflow is one of these agents, the report adds
-**05 Expected vs. found** (`report["expected_vs_found"]`): each planted
-finding and trap next to what section 01 listed, findings nobody planted,
-and, when ground truth is sent, per-node determinism. **06 Validate**
+**06 Expected vs. found** (`report["expected_vs_found"]`): each planted
+finding and trap next to what sections 01 and 04 listed, findings nobody
+planted, and, when ground truth is sent, per-node determinism. **07 Validate**
 then grades each "same answer every time" call against the known answer.
 "Not judged: too few repeats" there is not an error: a step is only called
 after the same input repeats, so small data (a few hundred lines) leaves most
 steps unjudged. The dashboard defaults to 2,000 lines and won't generate fewer
 than 1,000 (the CLI and `/generate` still accept any multiple of 20).
+
+### Behavior
+
+Report section **04 Behavior** (`report["behavior"]`, `src/profiler/behavior.py`)
+describes each action of the analyzed workflow: calls, cost avg / p50 / p95,
+latency p50 / p95, consistency (same input → same output, over repeated
+inputs), a split by model and by agent version, and how much of the answer
+each low-cardinality input field explains (normalized information gain;
+fields with 2–12 values and ≥5 calls per value).
+
+A **region** is an input value under which a simple lookup rule (a constant,
+or one other field) is right ≥95% of the time, while the field's other
+values, each given its own best rule, are still wrong ≥10% of the time, and
+the gap passes a one-sided binomial test (p < 0.01). Letting the rest pick its
+own rule keeps plain two-field functions ("reject if lint fails, else follow
+the tests") from reading as regions. Regions need no repeated inputs, only
+≥15 calls per value. On the mock agents the planted region shows from about
+5,000 lines (10 of 10 seeds); at p < 0.01 an unplanned region shows up in
+roughly 1 of 10 datasets, and it is listed as "found, not planted".
+
+"Compare outputs" (`output_match` on `/analyze`) sets what counts as the same
+answer for this section only: `exact` (decision and result), `decision`, or
+`normalized` (lowercased, numbers and long ids masked). The determinism
+classifier always compares exactly.
+
+**History** is opt-in: tick "Keep these events in history" (`keep_history=true`
+on `/analyze`) to store the upload's events in SQLite at `BEHAVIOR_DB`
+(default `data/behavior.sqlite`). Events are deduplicated by content.
+`GET /behavior?workflow=&node=&where=field=value&output_match=` builds the
+same section from everything kept; `GET /behavior/history` summarizes it;
+`DELETE /behavior/history?workflow=&older_than_days=` prunes it. It stores
+inputs and outputs on the server. On Railway, point `BEHAVIOR_DB` at a
+mounted volume, or history is lost on every deploy.
 
 ### POC: expected vs. found
 
@@ -228,7 +268,9 @@ The "Run tests" tab (`POST /run_sweep`) is a health check of the pipeline:
 24 settings, one change at a time from a baseline (agent count, variance,
 demand model, 1,000–10,000 lines, capacity overrides). Each case reports
 pass/fail, time, and how many of the analyzed agent's planted findings the
-report found (`planted_found` / `planted_total` / `false_alarms`).
+report found (`planted_found` / `planted_total` / `false_alarms`), plus the
+behavior regions found (`regions`) and whether the planted one was among them
+(`region_found`; only from ~5,000 lines).
 
 ### When the data is incomplete
 

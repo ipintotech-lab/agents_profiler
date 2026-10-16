@@ -10,6 +10,22 @@ SEVERITIES = ["low", "medium", "high", "critical"]
 _REMEDIATIONS = ["upgrade", "mitigate"]
 
 
+_SURE_SEVERITIES = ("high", "critical")
+_UNSURE_EXTRA_FLIP = 0.25
+
+
+def _conditional_remediation(run_id: str, severity: str, canonical: str, noisy: str) -> str:
+    """The planted region: for high/critical CVEs the remediation follows
+    fix_available every time; for low/medium it flips 40% of the time --
+    averaging the 80% in ``DETERMINISM_PROFILE``. The extra flips draw from
+    a per-run RNG so the main sequence (and every other node) is unchanged."""
+    if severity in _SURE_SEVERITIES:
+        return canonical
+    if noisy == canonical and random.Random(run_id).random() < _UNSURE_EXTRA_FLIP:
+        return next(r for r in _REMEDIATIONS if r != canonical)
+    return noisy
+
+
 def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Run]:
     rng = rng or random.Random()
     cve = f"CVE-2026-{rng.randint(1000, 9999)}"
@@ -32,6 +48,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
     component = f"service-{rng.randint(1, 50)}"
     remediation_canonical = "upgrade" if not issue_exists else "mitigate"
     remediation = apply_noise(rng, "analyze_remediation", remediation_canonical, _REMEDIATIONS)
+    remediation = _conditional_remediation(run_id, severity, remediation_canonical, remediation)
     run.action(
         "analyze_remediation", state={**state, "component": component},
         decision=("remediation", remediation), model="demo-llm-v1",
