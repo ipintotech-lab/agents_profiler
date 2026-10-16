@@ -93,7 +93,11 @@ def build_delta(
             grew = None
             if oa.get("variant_id") != ob.get("variant_id"):
                 na, nb = len(oa.get("nodes") or []), len(ob.get("nodes") or [])
-                grew = "grew" if nb > na else "shrank" if nb < na else "changed shape"
+                # status names the CHAIN SHAPE (variant extension), never
+                # the frequency: a chain_grew pattern can also be happening
+                # less often -- change.occurrences is the frequency
+                # direction, kept separate so a reader doesn't conflate them
+                grew = "chain_grew" if nb > na else "chain_shrank" if nb < na else "chain_reshaped"
             patterns.append(
                 {
                     "pattern_id": pid,
@@ -145,7 +149,7 @@ def build_delta(
             "b": {"totals": b["totals"], "savings": sav_b},
         },
         "summary": {
-            "patterns_matched": sum(1 for p in patterns if p["status"] in (None, "unchanged", "grew", "shrank", "changed shape")),
+            "patterns_matched": sum(1 for p in patterns if p["status"] in ("unchanged", "chain_grew", "chain_shrank", "chain_reshaped")),
             "patterns_resolved": len(resolved),
             "patterns_absorbed": len(absorbed),
             "patterns_appeared": len(appeared),
