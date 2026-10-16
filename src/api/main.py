@@ -36,6 +36,8 @@ from ingest import DEFAULT_DEMAND_MODEL, normalize_raw_json, parse_raw_text
 from ingest.huggingface import fetch_records, list_data_files, parse_hf_url
 from ingest.trace_schema import TraceEvent
 from profiler import history, run_pipeline, run_poc, run_sweep
+from profiler.delta import build_delta
+from profiler.mine import observe
 from profiler.prices import PRICE_TABLE, lookup_price
 from profiler.sweep import _build_cases
 from profiler.behavior import OUTPUT_MATCHES, build_behavior
@@ -288,6 +290,10 @@ async def _load_events(
     a summary per source."""
     events: list[TraceEvent] = []
     file_summaries: list[dict] = []
+    # A file with the same content as another upload is skipped, not fatal:
+    # a customer uploading 50 files with 2 accidental dupes should get the
+    # 48 analyzed plus a loud note about the 2, not a dead request.
+    files_rejected: list[dict] = []
     seen_digests: dict[str, str] = {}
     # The same corpus must produce the same report regardless of upload
     # order: files are processed in canonical order (by content digest),
@@ -300,7 +306,8 @@ async def _load_events(
         name = upload.filename or f"file {len(uploads) + 1}"
         digest = hashlib.sha256(raw).hexdigest()
         if digest in seen_digests:
-            raise HTTPException(status_code=400, detail=f"{name} has the same content as {seen_digests[digest]}")
+            files_rejected.append({"name": name, "reason": f"same content as {seen_digests[digest]}"})
+            continue
         seen_digests[digest] = name
         uploads.append((digest, name, raw))
     uploads.sort(key=lambda u: u[0])
@@ -323,7 +330,7 @@ async def _load_events(
             raise HTTPException(status_code=422, detail=f"could not parse {name}: {exc}") from exc
         events.extend(hf_events)
         file_summaries.append({"name": name, "num_events": len(hf_events), "num_records": len(records)})
-    return events, file_summaries
+    return events, file_summaries, files_rejected
 
 
 @app.post("/analyze")
@@ -392,7 +399,7 @@ async def analyze(
             token_prices = lookup_price(model)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
+    events, file_summaries, files_rejected = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
     parsed_ground_truth = None
     if ground_truth:
         try:
@@ -414,6 +421,8 @@ async def analyze(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     report["observe"]["files"] = file_summaries
+    if files_rejected:
+        report["observe"]["files_rejected"] = files_rejected
     if keep_history:
         try:
             kept = await run_in_threadpool(
@@ -423,6 +432,64 @@ async def analyze(
             kept = {"error": str(exc)}
         report["history"] = kept
     return report
+
+
+@app.post("/delta")
+async def delta(
+    files_a: list[UploadFile] | None = File(None),  # noqa: B008
+    files_b: list[UploadFile] | None = File(None),  # noqa: B008
+    workflow: str | None = Form(None),
+    price_input_per_mtok: float | None = Form(None),
+    price_output_per_mtok: float | None = Form(None),
+    model: str | None = Form(None),
+) -> dict:
+    """The verification loop: two time windows of the same workflow in,
+    measured change per pattern out.
+
+    ``files_a`` (repeated) is the earlier window, ``files_b`` (repeated) the
+    later one; each window is loaded and canonicalized like ``/analyze``
+    (so the delta is upload-order-independent). Findings are matched by
+    their stable ``pattern_id``: same id in both windows = the same habit,
+    with ``variant_id`` showing whether the chain grew or shrank. A
+    pattern only in window A is *resolved* (or *absorbed* into a longer
+    chain, via the containment fallback); only in window B is *appeared*.
+    The headline ``avoidable_change`` is the measured difference between
+    the windows' deduplicated avoidable spend -- not a forecast.
+
+    ``price_input_per_mtok`` / ``price_output_per_mtok`` (or ``model=``)
+    price both windows identically, so the dollar deltas are comparable.
+    """
+    if (price_input_per_mtok is None) != (price_output_per_mtok is None):
+        raise HTTPException(status_code=400, detail="give both token prices (input and output) or neither")
+    token_prices = None
+    if price_input_per_mtok is not None:
+        if price_input_per_mtok < 0 or price_output_per_mtok < 0:
+            raise HTTPException(status_code=400, detail="token prices can't be negative")
+        token_prices = (price_input_per_mtok, price_output_per_mtok)
+    elif model is not None:
+        try:
+            token_prices = lookup_price(model)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not files_a or not files_b:
+        raise HTTPException(status_code=400, detail="upload files for both windows (files_a, files_b)")
+    events_a, files_a_summaries, rejected_a = await _load_events(files_a, None, None, 10, None)
+    events_b, files_b_summaries, rejected_b = await _load_events(files_b, None, None, 10, None)
+    observed = observe(events_a)
+    if not observed["workflows"]:
+        raise HTTPException(status_code=400, detail="no workflow found in the window A files")
+    selected = workflow or observed["workflows"][0]["name"]
+    if selected not in {e.workflow for e in events_b}:
+        raise HTTPException(status_code=400, detail=f"workflow '{selected}' not present in the window B files")
+    try:
+        result = await run_in_threadpool(build_delta, events_a, events_b, selected, token_prices)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result["windows"]["a"]["files"] = files_a_summaries
+    result["windows"]["b"]["files"] = files_b_summaries
+    if rejected_a or rejected_b:
+        result["files_rejected"] = rejected_a + rejected_b
+    return result
 
 
 @app.get("/prices")
@@ -498,7 +565,7 @@ async def finops(
         raise HTTPException(status_code=400, detail="runs_per_month must be positive")
     if (price_input_per_mtok is None) != (price_output_per_mtok is None):
         raise HTTPException(status_code=400, detail="give both token prices, or neither")
-    events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
+    events, file_summaries, files_rejected = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
     try:
         result = await run_in_threadpool(
             build_finops, events, output_match, runs_per_month, price_input_per_mtok, price_output_per_mtok

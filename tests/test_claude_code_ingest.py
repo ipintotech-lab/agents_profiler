@@ -117,10 +117,17 @@ def test_analyze_endpoint_merges_multiple_uploaded_files():
 
 
 def test_analyze_endpoint_rejects_duplicate_file_content():
+    """A byte-duplicate upload is skipped, not fatal: the rest of the
+    corpus is analyzed and the rejection is reported loudly in the
+    response (a customer with 50 files and 2 accidental dupes keeps the
+    48)."""
     body = "\n".join(json.dumps(r) for r in _transcript()).encode()
     response = TestClient(app).post("/analyze", files=[("file", ("a.jsonl", body)), ("file", ("copy.jsonl", body))])
-    assert response.status_code == 400
-    assert "copy.jsonl" in response.json()["detail"]
+    assert response.status_code == 200
+    rejected = response.json()["observe"]["files_rejected"]
+    assert rejected == [{"name": "copy.jsonl", "reason": "same content as a.jsonl"}]
+    # the surviving file was analyzed
+    assert [f["name"] for f in response.json()["observe"]["files"]] == ["a.jsonl"]
 
 
 def test_analyze_endpoint_names_the_bad_file_in_parse_errors():
