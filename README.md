@@ -8,6 +8,22 @@ data-ingestion layer that builds B-POP problems from AI-agent-workflow
 trace rows (the normalized trace schema from
 `AI_Agent_Profiler_Product_Technical_Design_Review.docx`).
 
+> **Field note — the profiler that profiled its own customer.** A customer
+> reported three order-dependence bugs in `/analyze` (silent file drop,
+> pricing mode flip, savings cascade) on a 10-session corpus. Root cause,
+> found only by reproducing the request in isolation: one of the uploaded
+> session files was *the customer's own live session*, growing while the
+> upload ran. curl announces a fixed `Content-Length`; a growing file
+> overruns it; the server truncates at the announced length; the multipart
+> parser silently drops everything after the cut — in one order, the lost
+> tail was a session file plus the price form fields, which manufactured
+> all three "bugs" at once. Fixes: a middleware that rejects any multipart
+> body not ending in its closing boundary marker (a silently partial
+> corpus can never be analyzed again) and canonical, order-independent
+> processing. Lesson: when a bug smells like order-dependence, check
+> whether the requests were actually identical before hunting
+> order-sensitivity in the logic.
+
 ## Scope — what this is, and isn't
 
 This repo is the **B-POP optimizer, a trace-ingestion path, and a small
