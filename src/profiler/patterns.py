@@ -268,6 +268,10 @@ def repeated_calls(events: list[TraceEvent]) -> list[dict]:
                 "same_output": same_output,
                 "redundant_calls": len(group) - 1 if same_output else 0,
                 "cost": sum(e.cost for e in group),
+                # how much the operation actually returned -- the generic
+                # impact measure for cache candidates (a few bytes never
+                # decision-mattered), never the operation's name
+                "result_size": max((len(e.result) for e in group if e.result), default=0),
                 # Including the LLM calls that chose to run it.
                 "cost_with_decision": sum(e.cost + shares.get(id(e), 0.0) for e in group),
                 "tokens_with_decision": sum(e.tokens.input + e.tokens.output for e in group),

@@ -19,10 +19,6 @@ from .prices import SCENARIOS
 from .mine import ActionStats
 
 MAX_PER_TYPE = 5
-# Hidden-state findings carry no savings of their own -- one line in the
-# summary is enough to say "something unrecorded changes this", the rest
-# would bury the patterns that do save tokens.
-MAX_PER_TYPE_BY_TYPE = {"REVIEW_HIDDEN_STATE": 1}
 # A sequence whose steps follow each other at least this often is a fixed
 # procedure: the LLM calls between the steps only rubber-stamp the next
 # one, so the sequence can become one scripted step. Below it the model
@@ -48,12 +44,13 @@ WRITE_WORDS = frozenset({
 # ...and these only as the first word ("log_activity" writes, "fetch_error_log" doesn't).
 WRITE_VERBS = frozenset({"log", "page", "notify", "trigger", "schedule", "apply", "pause", "cancel", "close", "book"})
 
-# Commands whose result is never decision-relevant: caching an ``echo``
-# saves nothing anyone would notice, so they never become CACHE_RESULT
-# findings -- however often they repeat.
-TRIVIAL_COMMANDS = frozenset({
-    "echo", "printf", "true", "false", "cd", "pwd", "ls", "sleep", "date", "which", "rm", "mkdir", "touch",
-})
+# A cache candidate is worth a summary line only when its repeats carried
+# real work to skip. The measure is what the operation returned (and any
+# cost of its own), never the operation's name: a result of a few bytes
+# never decision-mattered, however often it repeated -- measured on the
+# POC's mock agents and real sessions alike, 80 chars cleanly separates
+# "the agent read this" from "the agent printed a marker".
+MIN_CACHEABLE_RESULT_CHARS = 80
 
 # Plain-language meaning of each optimization type, shown next to the name.
 OPTIMIZATION_TYPES = {
@@ -61,7 +58,7 @@ OPTIMIZATION_TYPES = {
     "REPEATED_AGENT_PATTERN": "The agent pays a full model call just to choose the next basic step -- the cost is the steering, not the tools. The fix is tuning, not tooling: batch related commands into one call, or route these choices to a cheaper model.",
     "CACHE_RESULT": "The same operation ran with the identical input and gave the same output every time. Reusing the first result skips the repeats. Operations whose name says they change something (create, update, send, edit...) are never suggested.",
     "CONDITIONAL_LLM_BYPASS": "An LLM call made the same choice every time it saw the same starting point and input. A rule could make that choice without calling the model.",
-    "REVIEW_HIDDEN_STATE": "The same request gave different results even with identical context and configuration, so something the traces don't record is changing the outcome.",
+    "REVIEW_HIDDEN_STATE": "A tool returned different results for the identical input -- a flaky tool or a world that changed between calls. Find what changes before automating around it. (LLM calls are exempt: a model choosing differently is expected, not a finding.)",
 }
 
 
@@ -160,11 +157,6 @@ def has_side_effect(name: str) -> bool:
     )
 
 
-def _is_trivial(node: str) -> bool:
-    """Whether a node is a command whose output nobody decisions on."""
-    return node.split(":")[-1].strip().lower() in TRIVIAL_COMMANDS
-
-
 def _cache_opportunities(calls: list[dict], names: dict[str, set[str]]) -> list[dict]:
     return [
         {
@@ -183,7 +175,7 @@ def _cache_opportunities(calls: list[dict], names: dict[str, set[str]]) -> list[
         }
         for c in calls
         if c["redundant_calls"] > 0
-        and not _is_trivial(c["node"])
+        and (c.get("result_size", 0) >= MIN_CACHEABLE_RESULT_CHARS or c["cost"] > 0)
         and not any(has_side_effect(n) for n in names.get(c["node"], set()) | {c["node"]})
     ]
 
@@ -192,17 +184,19 @@ def _fingerprint_opportunities(stats: list[ActionStats], llm_nodes: set[tuple[st
     found = []
     for s in stats:
         fp = s.fingerprints
-        # Only an LLM call can be replaced by a rule, and only an LLM call's
-        # unexplained variance points at hidden state -- a tool whose output
-        # changes for the same input is just reading a world that changed.
-        if not fp or (s.agent, s.node) not in llm_nodes:
+        if not fp:
             continue
-        if fp["variance"].get("factor") == "unexplained":
+        is_llm = (s.agent, s.node) in llm_nodes
+        # An LLM call's unexplained variance is the model choosing --
+        # expected, not a finding. A *tool* returning different results
+        # for the identical input is flakiness or a changing world, and
+        # that genuinely matters: fix it before automating around it.
+        if not is_llm and fp["variance"].get("factor") == "unexplained":
             found.append(
                 {
                     "type": "REVIEW_HIDDEN_STATE",
                     "title": s.node,
-                    "action": "Find what changes the result: state or inputs the traces don't capture",
+                    "action": "Find what changes the result: a flaky tool, or state the traces don't capture",
                     "evidence": fp["variance"]["explanation"],
                     "nodes": [s.node],
                     "observations": s.occurrences,
@@ -210,6 +204,9 @@ def _fingerprint_opportunities(stats: list[ActionStats], llm_nodes: set[tuple[st
                     "observed_cost": s.avg_cost * s.occurrences,
                 }
             )
+        # Only an LLM call can be replaced by a rule.
+        if not is_llm:
+            continue
         for g in fp["groups"]:
             # Worth replacing only when the repeated choice cost something --
             # money when the traces record it, tokens otherwise.
@@ -301,11 +298,8 @@ def build_summary(events: list[TraceEvent], workflow: str, repetition: dict, sta
     shown = []
     for o in opportunities:
         per_type[o["type"]] = per_type.get(o["type"], 0) + 1
-        if per_type[o["type"]] <= MAX_PER_TYPE_BY_TYPE.get(o["type"], MAX_PER_TYPE):
+        if per_type[o["type"]] <= MAX_PER_TYPE:
             shown.append(o)
-    # hidden-state findings go to the bottom: they carry no savings, and a
-    # list that leads with "something varies" reads as noise
-    shown.sort(key=lambda o: o["type"] == "REVIEW_HIDDEN_STATE")
 
     # One honest total: opportunities overlap (the same loop appears as
     # several sequences), so the deduplicated figure counts each action at

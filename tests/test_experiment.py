@@ -172,8 +172,12 @@ def test_run_poc_reduced_run_matches_measured_result():
     assert result["conclusion"] == "NOT YET SUPPORTED"
     assert result["phase3_recommendation_stability"]["top1_stability"] == 0.6
     p6 = result["phase6_expected_vs_found"]["summary"]
-    # 18th planted finding: the DETERMINISTIC_REGION in analyze_remediation
-    assert (p6["planted_found"], p6["planted_total"], p6["false_alarms"]) == (15, 18, 1)
+    # 11 planted findings: the llm-call hidden-state plants are now traps by
+    # design (an LLM varying is the model choosing, not a finding), the
+    # flaky tool check_job_status is the new positive hidden-state case,
+    # and the DETERMINISTIC_REGION in analyze_remediation stays below the
+    # evidence bar at this reduced scale
+    assert (p6["planted_found"], p6["planted_total"], p6["false_alarms"]) == (10, 11, 1)
 
 
 def test_poc_run_endpoint_returns_full_report():

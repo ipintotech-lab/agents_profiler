@@ -38,7 +38,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
 
     run.action(
         "enrich_company", event_type="tool_call", state={"domain": domain}, tool="clearbit.enrich",
-        latency_ms=jittered_int(rng, 250, 600, variance, floor=1), result=f"profile:{industry}:{size}:{region}",
+        latency_ms=jittered_int(rng, 250, 600, variance, floor=1), result=f"profile:{industry}:{size}:{region}:billing=annual,plan=team,seats=25,health=green,tags=saas,b2b,active",
         parent=parent,
     )
     run.action(
@@ -62,7 +62,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
     )
     run.action(
         "assign_rep", event_type="tool_call", state={"region": region, "tier": tier}, tool="crm.round_robin_owner",
-        latency_ms=jittered_int(rng, 80, 150, variance, floor=1), result=f"rep:{region}-{tier}", parent=parent,
+        latency_ms=jittered_int(rng, 80, 150, variance, floor=1), result=f"rep:{region}-{tier}:owner={region}.{tier.lower()}@example.com,quota=120,team=inbound,territory={region},level=L2", parent=parent,
     )
     run.action(
         "write_outreach", state={"tier": tier, "industry": industry},

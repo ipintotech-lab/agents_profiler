@@ -34,7 +34,9 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
     def schema() -> None:
         run.action(
             "get_table_schema", event_type="tool_call", state={"table": table}, tool="warehouse.describe_table",
-            latency_ms=jittered_int(rng, 300, 800, variance, floor=1), result=f"schema:{table}:v3", parent=parent,
+            latency_ms=jittered_int(rng, 300, 800, variance, floor=1),
+            result=f"schema:{table}:id,name,status,created_at,updated_at,owner_id,amount,currency,source,dedupe_key,notes",
+            parent=parent,
         )
 
     status = apply_noise(rng, "check_job_status", "failed", ["failed", "retrying", "succeeded"])

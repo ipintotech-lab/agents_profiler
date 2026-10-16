@@ -98,7 +98,7 @@ def test_summary_ranks_opportunities_and_prices_cache_with_deciding_cost():
     from profiler.opportunities import build_summary
 
     events = [e for run in ("r1", "r2", "r3") for e in _git_flow(run)]
-    events += [e for i in range(3) for e in (_router(f"c{i}", cost=0.3), _tool(f"c{i}", "Read", result="success:same", file_path="a.py"))]
+    events += [e for i in range(3) for e in (_router(f"c{i}", cost=0.3), _tool(f"c{i}", "Read", result="line 1 " + "x" * 200, file_path="a.py"))]
     summary = build_summary(events, "wf", find_repetition(events, "wf"), mine(events, "wf"))
     types = {o["type"] for o in summary["opportunities"]}
     assert {"EXTRACT_DETERMINISTIC_SUBSTEP", "CACHE_RESULT"} <= types
@@ -212,27 +212,45 @@ def test_summary_deduplicates_overlapping_findings_and_prices_scenarios():
     assert abs(est - expected) < 1e-9
 
 
-def test_trivial_commands_never_become_cache_findings():
+def test_cache_findings_need_real_work_to_skip():
+    """A cache candidate is worth a line only when its repeats carried real
+    work -- measured by what the operation returned (or cost on its own),
+    never by the operation's name: a tool returning a few bytes 4× is
+    trivia, a tool returning a real payload 4× is a finding."""
+    from profiler.mine import mine
     from profiler.opportunities import find_opportunities
+
+    tiny = [e for i in range(4) for e in (_router(f"c{i}"), _tool(f"c{i}", "run_marker", result="ok"))]
+    payload = [e for i in range(4) for e in (_router(f"p{i}"), _tool(f"p{i}", "fetch_report", result="x" * 500))]
+
+    for events, expect in ((tiny, False), (payload, True)):
+        rep = find_repetition(events, "wf")
+        found = find_opportunities(events, "wf", rep, mine(events, "wf"))
+        assert any(o["type"] == "CACHE_RESULT" for o in found) is expect
+
+
+def test_hidden_state_is_a_tool_finding_not_an_llm_one():
+    """A tool returning different results for the identical input is
+    flakiness -- a finding. An LLM call varying is the model choosing --
+    expected, never a finding."""
     from profiler.mine import mine
+    from profiler.opportunities import find_opportunities
 
-    # echo repeats with identical input and output -- caching it saves
-    # nothing anyone would notice, so it must not become a finding
-    events = [e for i in range(4) for e in (_router(f"c{i}"), _tool(f"c{i}", "Bash: echo", result="deployed"))]
-    rep = find_repetition(events, "wf")
-    found = find_opportunities(events, "wf", rep, mine(events, "wf"))
-    assert all(o["type"] != "CACHE_RESULT" for o in found)
+    # flaky tool: identical input, alternating results
+    flaky = [e for i in range(6) for e in (_router(f"f{i}"), _tool(f"f{i}", "fetch_status", url="x", result="ok" if i % 2 else "fail"))]
+    rep = find_repetition(flaky, "wf")
+    found = find_opportunities(flaky, "wf", rep, mine(flaky, "wf"))
+    assert any(o["type"] == "REVIEW_HIDDEN_STATE" for o in found)
 
-
-def test_hidden_state_findings_are_demoted_and_capped():
-    from profiler.mine import mine
-    from profiler.opportunities import build_summary
-
-    # several LLM-call nodes with unexplained variance: at most one line
-    # in the summary, at the bottom -- they carry no savings
-    events = [e for run in ("r1", "r2", "r3", "r4") for e in _git_flow(run)]
-    summary = build_summary(events, "wf", find_repetition(events, "wf"), mine(events, "wf"))
-    hidden = [o for o in summary["opportunities"] if o["type"] == "REVIEW_HIDDEN_STATE"]
-    assert len(hidden) <= 1
-    if hidden:
-        assert summary["opportunities"][-1]["type"] == "REVIEW_HIDDEN_STATE"
+    # varying LLM call: same trigger and input digest, different selections
+    llm_events = [
+        TraceEvent(
+            trace_id="t", run_id=f"r{i}", workflow="wf", agent="a", event_type="decision",
+            node="llm_call", model="m", decision={"type": "next_action", "selected": "x" if i % 2 else "y"},
+            input_state={"prompt": "same"}, cost=0.1, tokens={"input": 10, "output": 2},
+        )
+        for i in range(6)
+    ]
+    rep = find_repetition(llm_events, "wf")
+    found = find_opportunities(llm_events, "wf", rep, mine(llm_events, "wf"))
+    assert all(o["type"] != "REVIEW_HIDDEN_STATE" for o in found)
