@@ -2554,7 +2554,7 @@ function renderSummary(data) {
     ? 'Nothing repeated often enough to suggest a change yet.'
     : `${sm.num_opportunities} opportunities found. What you actually do repeatedly:
        <ol class="top5">${top5.map(o => `<li><b>${esc(o.title)}</b> — ${cost(o)} — ${esc(SHORT_FIX[o.type] || o.action)}</li>`).join('')}</ol>
-       ${savLine}${scen}${cave}`;
+       ${savLine}${scen}${caveat}`;
   const input = inp => inp && Object.keys(inp).length
     ? `<div class="inp">${Object.entries(inp).map(([k, v]) => `<span class="k">${esc(k)}:</span> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}`).join('\n')}</div>` : '';
   // one real occurrence of a repeated sequence, so the customer sees what
