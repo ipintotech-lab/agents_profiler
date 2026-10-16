@@ -128,8 +128,10 @@ def run_pipeline(
     relevant = [e for e in events if e.workflow == selected_workflow]
     shares = decision_costs(relevant)
     decision_cost: dict[tuple[str, str], float] = defaultdict(float)
+    node_tokens: dict[tuple[str, str], int] = defaultdict(int)
     for e in relevant:
         decision_cost[(e.agent, e.node)] += shares.get(id(e), 0.0)
+        node_tokens[(e.agent, e.node)] += e.tokens.input + e.tokens.output
     repetition = find_repetition(events, selected_workflow)
 
     agents_summary = {}
@@ -163,6 +165,7 @@ def run_pipeline(
                 "avg_cost": s.avg_cost,
                 "decision_cost": decision_cost[(s.agent, s.node)],
                 "total_cost": s.avg_cost * s.occurrences + decision_cost[(s.agent, s.node)],
+                "tokens": node_tokens[(s.agent, s.node)],
                 "avg_latency_ms": s.avg_latency_ms,
                 "cost_component": round(s.cost_component, 4),
                 "score": round(s.score, 4),

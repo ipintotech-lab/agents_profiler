@@ -643,8 +643,8 @@ hf auth login</pre>
 
     <h2><span class="idx">02</span>Repetition <span style="font-size:12px;color:var(--faint)">— what the agent does over and over</span></h2>
     <p class="takeaway" id="seqTakeaway"></p>
-    <p class="lede">Repeated sequences: the same steps in the same order, recurring across runs. "Between steps" is the LLM calls (and their real tokens and cost) spent only on choosing the next step inside the sequence. Combining the sequence into one scripted flow would remove those. Click a row to see an example.</p>
-    <table id="seqTable"><thead><tr><th>Sequence</th><th class="num">Seen</th><th class="num">Runs</th><th class="num">LLM calls between steps</th><th class="num">Tokens between steps</th><th class="num">Cost between steps</th><th class="num">Total cost</th></tr></thead><tbody></tbody></table>
+    <p class="lede">Repeated sequences: the same steps in the same order, recurring across runs. The sequence is shown as it actually ran in one real occurrence. <b>Follows</b> is how often the next step follows the previous one out of all the times that step ran — near 100% is a fixed procedure the model only rubber-stamps; lower means the model chooses between options, and the finding is a recurring shape, not a script. "Between steps" is the LLM calls (and their real tokens and cost) spent only on choosing the next step inside the sequence. Click a row to see an example.</p>
+    <table id="seqTable"><thead><tr><th>Sequence <span class="hint">(one real occurrence)</span></th><th class="num">Seen</th><th class="num">Runs</th><th class="num">Follows</th><th class="num">LLM calls between steps</th><th class="num">Tokens between steps</th><th class="num">Cost between steps</th><th class="num">Total cost</th></tr></thead><tbody></tbody></table>
     <p class="takeaway" id="callTakeaway"></p>
     <p class="lede">Repeated calls: the same operation with the identical input. If every repeat gave the same output, each repeat after the first was redundant (a cache candidate).</p>
     <table id="callTable"><thead><tr><th>Operation</th><th>Input</th><th>User input</th><th class="num">Seen</th><th>Output</th><th class="num">Redundant</th></tr></thead><tbody></tbody></table>
@@ -1717,7 +1717,7 @@ function renderBehavior(b, prefix) {
   $('BehaviorStats').innerHTML =
     statCardExplained(s.nodes, 'actions', `distinct actions in ${esc(b.workflow || 'all workflows')}${b.where ? `, where ${esc(b.where)}` : ''}; ${b.num_events} calls, outputs compared as ${OUTPUT_MATCH_LABELS[b.output_match] || b.output_match}.`) +
     statCardExplained(s.regions, 'regions', 'input values under which a simple rule gives the answer while the rest of the action needs the LLM.') +
-    statCardExplained(usd(s.region_saving), 'LLM cost in regions', 'what the LLM calls inside the regions cost in this data: a rule could answer them instead. Observed, not forecast.') +
+    statCardExplained(s.region_saving ? usd(s.region_saving) : '—', 'LLM cost in regions', 'what the LLM calls inside the regions cost in this data: a rule could answer them instead. Observed, not forecast.' + (s.region_saving ? '' : ' No cost recorded in these traces — set token prices on the input form to estimate it.')) +
     statCardExplained(s.deciding_fields, 'decided by one field', 'actions whose answer one input field explains (≥95%): candidates for a lookup table.') +
     statCardExplained(`${s.models} · ${s.versions}`, 'models · versions', 'distinct models and agent versions seen; the table splits cost and consistency by each.');
   const top = regions[0];
@@ -2191,19 +2191,24 @@ function render(data) {
   // Repetition
   const rep = data.repetition || { sequences: [], calls: [] };
   const inputText = inp => Object.entries(inp).map(([k, v]) => `<span class="k">${esc(k)}:</span> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}`).join('\n');
-  document.querySelector('#seqTable tbody').innerHTML = rep.sequences.length ? rep.sequences.map(p => `
+  document.querySelector('#seqTable tbody').innerHTML = rep.sequences.length ? rep.sequences.map(p => {
+    const fixed = p.transition_rate != null && p.transition_rate >= 0.9;
+    return `
     <tr class="node-row">
-      <td>${p.steps.map(st => `<span class="oc"><b>${esc(st)}</b></span>`).join('→ ')}</td>
+      <td>${(p.signature || p.steps).map(st => `<span class="oc"><b>${esc(st)}</b></span>`).join('→ ')}
+        <div class="hint">${fixed ? 'fixed procedure — the model only rubber-stamps the next step' : 'the model chooses the next step'}</div></td>
       <td class="num">${p.occurrences}</td>
       <td class="num">${p.runs}</td>
+      <td class="num">${p.transition_rate != null ? Math.round(p.transition_rate * 100) + '%' : '—'}</td>
       <td class="num">${p.llm_calls_between_steps}</td>
       <td class="num">${p.tokens_between_steps.toLocaleString()}</td>
-      <td class="num">$${p.cost_between_steps.toFixed(2)}</td>
-      <td class="num">$${p.sequence_cost.toFixed(2)}</td>
+      <td class="num">${p.cost_between_steps ? '$' + p.cost_between_steps.toFixed(2) : '—'}</td>
+      <td class="num">${p.sequence_cost ? '$' + p.sequence_cost.toFixed(2) : '—'}</td>
     </tr>
-    <tr class="node-detail" hidden><td colspan="7">${p.example[0].user_input ? `<p class="lede"><b>User input:</b> ${esc(p.example[0].user_input)}</p>` : ''}<table><thead><tr><th>Example step</th><th>Input</th></tr></thead><tbody>
+    <tr class="node-detail" hidden><td colspan="8">${p.example[0].user_input ? `<p class="lede"><b>User input:</b> ${esc(p.example[0].user_input)}</p>` : ''}<table><thead><tr><th>Example step</th><th>Input</th></tr></thead><tbody>
       ${p.example.map(st => `<tr><td>${esc(st.node)}</td><td class="inp">${inputText(st.input) || '<span class="k">(empty input)</span>'}</td></tr>`).join('')}
-    </tbody></table></td></tr>`).join('') : '<tr><td colspan="7">No sequence repeated 3+ times.</td></tr>';
+    </tbody></table></td></tr>`;
+  }).join('') : '<tr><td colspan="8">No sequence repeated 3+ times.</td></tr>';
   document.querySelector('#callTable tbody').innerHTML = rep.calls.length ? rep.calls.map(c => `
     <tr>
       <td>${esc(c.node)}</td>
@@ -2422,12 +2427,13 @@ const money = x => x >= 0.1 ? `$${x.toFixed(2)}` : `$${x.toFixed(3)}`;
 
 function nodeRows(a) {
   const deciding = a.decision_cost > 0 ? `<span class="sub-cost">${money(a.decision_cost)} deciding</span>` : '';
+  const costCell = a.total_cost ? `${money(a.total_cost)}${deciding}` : a.tokens ? `${tok(a.tokens)} tokens` : '—';
   return `
     <tr class="node-row" title="Show what started this node's actions and how consistent they were">
       <td>${esc(a.node)}</td>
       <td><span class="pill ${classificationPillClass(a.classification)}" title="${CLASSIFICATION_HELP[a.classification] || ''}">${classificationLabel(a.classification)}</span></td>
       <td class="num">${a.occurrences}</td>
-      <td class="num">${money(a.total_cost)}${deciding}</td>
+      <td class="num">${costCell}</td>
       <td class="num">${a.avg_latency_ms.toFixed(0)}</td>
       <td class="num ${a.score >= 0.5 ? 'warn' : ''}">${a.score.toFixed(3)}</td>
     </tr>
@@ -2437,7 +2443,9 @@ function nodeRows(a) {
 function rareNodesBody(rare) {
   if (!rare.length) return '';
   const cost = rare.reduce((t, a) => t + a.total_cost, 0);
-  return `<tbody><tr class="rare-toggle"><td colspan="6">Show ${rare.length} nodes seen fewer than ${MIN_SHOWN_OCCURRENCES} times (${money(cost)} in total)</td></tr></tbody>
+  const tokens = rare.reduce((t, a) => t + a.tokens, 0);
+  const total = cost ? money(cost) : `${tok(tokens)} tokens`;
+  return `<tbody><tr class="rare-toggle"><td colspan="6">Show ${rare.length} nodes seen fewer than ${MIN_SHOWN_OCCURRENCES} times (${total} in total)</td></tr></tbody>
     <tbody class="rare" hidden>${rare.map(nodeRows).join('')}</tbody>`;
 }
 
@@ -2506,7 +2514,7 @@ function renderSummary(data) {
     <tr>
       <td>${esc(o.title)}${input(o.input)}${example(o.example)}</td>
       <td>${esc(o.evidence)}</td>
-      <td class="num">${o.saving == null ? '<span class="k">—</span>' : money(o.saving)}</td>
+      <td class="num">${o.saving ? money(o.saving) : o.saving_tokens ? `${tok(o.saving_tokens)} tokens<div class="hint">${o.saving_llm_calls} LLM calls</div>` : '<span class="k">—</span>'}</td>
       <td>${esc(o.action)}</td>
     </tr>`;
   document.querySelector('#oppTable tbody').innerHTML = opps.length ? types.map(type => `
@@ -2518,9 +2526,14 @@ function renderSummary(data) {
 function seqTakeaway(seqs) {
   if (!seqs.length) return '';
   const top = seqs[0];
-  return `Most expensive repeat: <b>${esc(top.steps.join(' → '))}</b>, ${top.occurrences}× in ${top.runs} runs, ` +
-    `with ${top.llm_calls_between_steps} LLM calls (${money(top.cost_between_steps)}) spent only on picking the next step.`;
+  const saving = top.cost_between_steps
+    ? `${top.llm_calls_between_steps} LLM calls (${money(top.cost_between_steps)})`
+    : `${top.llm_calls_between_steps} LLM calls (${tok(top.tokens_between_steps)} tokens)`;
+  const fixed = top.transition_rate != null && top.transition_rate >= 0.9;
+  return `Most expensive repeat: <b>${esc((top.signature || top.steps).join(' → '))}</b>, ${top.occurrences}× in ${top.runs} runs, with ${saving} spent only on picking the next step — ${fixed ? 'a fixed procedure the model rubber-stamps' : 'a shape the model steers'}.`;
 }
+
+const tok = n => n == null ? '—' : n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : String(Math.round(n));
 
 function callTakeaway(calls) {
   if (!calls.length) return '';
@@ -2534,8 +2547,9 @@ function mineTakeaway(byAgent) {
   const actions = Object.values(byAgent).flatMap(i => i.actions);
   if (!actions.length) return '';
   const rare = actions.filter(a => a.occurrences < MIN_SHOWN_OCCURRENCES).length;
-  const top = [...actions].sort((a, b) => b.total_cost - a.total_cost)[0];
-  return `Costliest node: <b>${esc(top.node)}</b> (${money(top.total_cost)}). ` +
+  const top = [...actions].sort((a, b) => (b.total_cost || b.tokens / 1e6) - (a.total_cost || a.tokens / 1e6))[0];
+  const topCost = top.total_cost ? money(top.total_cost) : `${tok(top.tokens)} tokens`;
+  return `Costliest node: <b>${esc(top.node)}</b> (${topCost}). ` +
     `${actions.length} nodes, ${rare} of them seen fewer than ${MIN_SHOWN_OCCURRENCES} times (hidden below).` +
     (actions.some(a => a.decision_cost > 0) ? ' A tool\'s cost includes the LLM call that chose it, which also appears on its own llm_call row, so the column doesn\'t add up to the total.' : '');
 }

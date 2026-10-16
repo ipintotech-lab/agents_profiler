@@ -9,9 +9,10 @@ the cost of the observed calls that would not have run, not a forecast.
 from __future__ import annotations
 
 import re
-from pathlib import PurePosixPath
 
 from ingest.trace_schema import TraceEvent
+
+from .patterns import step_signature
 
 from .mine import ActionStats
 
@@ -62,24 +63,6 @@ def _totals(events: list[TraceEvent]) -> dict:
     }
 
 
-def _step_signature(step: dict) -> str:
-    """One step of a repeated sequence as the customer reads it: what the
-    step actually did in a real occurrence, not just the tool name --
-    ``grep -n "watchSession" App.tsx`` instead of ``Bash: grep``."""
-    inp = step.get("input") or {}
-    cmd = inp.get("command")
-    if isinstance(cmd, str) and cmd.strip():
-        # a leading ``cd <dir> &&`` is context, not work
-        cmd = re.sub(r"^\s*cd\s+\S+\s*&&\s*", "", cmd.strip())
-        cmd = " ".join(cmd.split())  # collapse newlines / indentation
-        return cmd[:60] + ("…" if len(cmd) > 60 else "")
-    for key in ("file_path", "notebook_path", "path"):
-        value = inp.get(key)
-        if isinstance(value, str) and value:
-            return f"{step['node']} {PurePosixPath(value).name}"
-    return step["node"]
-
-
 def _sequence_opportunities(sequences: list[dict]) -> list[dict]:
     """Repeated step sequences, in two honest flavors: a fixed procedure
     (the next step follows virtually every time -- extract it into a
@@ -94,7 +77,7 @@ def _sequence_opportunities(sequences: list[dict]) -> list[dict]:
             # customer sees what was grepped / sedded / edited -- the tool
             # names alone say nothing about the work
             "title": (
-                " → ".join(_step_signature(s) for s in p["example"]) if p.get("example") else " → ".join(p["steps"])
+                " → ".join(p["signature"]) if p.get("signature") else " → ".join(p["steps"])
             ),
             "nodes": list(p["steps"]),
             "observations": p["occurrences"],

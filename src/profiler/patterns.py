@@ -21,8 +21,10 @@ run.
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 from ingest.trace_schema import TraceEvent
 
@@ -109,6 +111,24 @@ def decision_costs(events: list[TraceEvent]) -> dict[int, float]:
     return shares
 
 
+def step_signature(step: dict) -> str:
+    """One step of a repeated sequence as the customer reads it: what the
+    step actually did in a real occurrence, not just the tool name --
+    ``grep -n "watchSession" App.tsx`` instead of ``Bash: grep``."""
+    inp = step.get("input") or {}
+    cmd = inp.get("command")
+    if isinstance(cmd, str) and cmd.strip():
+        # a leading ``cd <dir> &&`` is context, not work
+        cmd = re.sub(r"^\s*cd\s+\S+\s*&&\s*", "", cmd.strip())
+        cmd = " ".join(cmd.split())  # collapse newlines / indentation
+        return cmd[:60] + ("…" if len(cmd) > 60 else "")
+    for key in ("file_path", "notebook_path", "path"):
+        value = inp.get(key)
+        if isinstance(value, str) and value:
+            return f"{step['node']} {PurePosixPath(value).name}"
+    return step["node"]
+
+
 def _step_summary(step: _Step) -> dict:
     return {
         "node": step.event.node,
@@ -183,6 +203,7 @@ def repeated_sequences(events: list[TraceEvent]) -> list[dict]:
             min(follow[(key[i], key[i + 1])] / step_totals[key[i]] for i in range(n - 1)) if n > 1 else 1.0
         )
         first_run, first_i = occ[0]
+        example = [_step_summary(s) for s in runs[first_run][first_i : first_i + n]]
         patterns.append(
             {
                 "steps": list(key),
@@ -196,7 +217,10 @@ def repeated_sequences(events: list[TraceEvent]) -> list[dict]:
                 "cost_between_steps": saving_cost,
                 "sequence_cost": sequence_cost,
                 "transition_rate": transition_rate,
-                "example": [_step_summary(s) for s in runs[first_run][first_i : first_i + n]],
+                # what the steps actually did in a real occurrence -- the
+                # customer reads commands, not tool names
+                "signature": [step_signature(s) for s in example],
+                "example": example,
                 "_occ": occ,
             }
         )
