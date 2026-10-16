@@ -9,12 +9,19 @@ the cost of the observed calls that would not have run, not a forecast.
 from __future__ import annotations
 
 import re
+from pathlib import PurePosixPath
 
 from ingest.trace_schema import TraceEvent
 
 from .mine import ActionStats
 
 MAX_PER_TYPE = 5
+# A sequence whose steps follow each other at least this often is a fixed
+# procedure: the LLM calls between the steps only rubber-stamp the next
+# one, so the sequence can become one scripted step. Below it the model
+# is making a real choice between steps -- the finding is then a repeated
+# *shape*, not a script waiting to be extracted.
+SCRIPTED_TRANSITION_RATE = 0.9
 # An LLM step that picks the same answer 80% of the time still looks
 # consistent 3 times in a row about half the time (0.8^3), but 5 in a row
 # only a third of the time (0.8^5). Measured on the POC's mock agents (10
@@ -36,7 +43,8 @@ WRITE_VERBS = frozenset({"log", "page", "notify", "trigger", "schedule", "apply"
 
 # Plain-language meaning of each optimization type, shown next to the name.
 OPTIMIZATION_TYPES = {
-    "EXTRACT_DETERMINISTIC_SUBSTEP": "The same steps run in the same order again and again. Turning them into one script removes the LLM calls that pick each next step.",
+    "EXTRACT_DETERMINISTIC_SUBSTEP": "The same steps run in the same order again and again -- the next step follows virtually every time, so the LLM calls between them only rubber-stamp it. Turning them into one script removes those calls.",
+    "REPEATED_AGENT_PATTERN": "The agent pays a full model call just to choose the next basic step -- the cost is the steering, not the tools. The fix is tuning, not tooling: batch related commands into one call, or route these choices to a cheaper model.",
     "CACHE_RESULT": "The same operation ran with the identical input and gave the same output every time. Reusing the first result skips the repeats. Operations whose name says they change something (create, update, send, edit...) are never suggested.",
     "CONDITIONAL_LLM_BYPASS": "An LLM call made the same choice every time it saw the same starting point and input. A rule could make that choice without calling the model.",
     "REVIEW_HIDDEN_STATE": "The same request gave different results even with identical context and configuration, so something the traces don't record is changing the outcome.",
@@ -54,21 +62,85 @@ def _totals(events: list[TraceEvent]) -> dict:
     }
 
 
+def _step_signature(step: dict) -> str:
+    """One step of a repeated sequence as the customer reads it: what the
+    step actually did in a real occurrence, not just the tool name --
+    ``grep -n "watchSession" App.tsx`` instead of ``Bash: grep``."""
+    inp = step.get("input") or {}
+    cmd = inp.get("command")
+    if isinstance(cmd, str) and cmd.strip():
+        # a leading ``cd <dir> &&`` is context, not work
+        cmd = re.sub(r"^\s*cd\s+\S+\s*&&\s*", "", cmd.strip())
+        cmd = " ".join(cmd.split())  # collapse newlines / indentation
+        return cmd[:60] + ("…" if len(cmd) > 60 else "")
+    for key in ("file_path", "notebook_path", "path"):
+        value = inp.get(key)
+        if isinstance(value, str) and value:
+            return f"{step['node']} {PurePosixPath(value).name}"
+    return step["node"]
+
+
 def _sequence_opportunities(sequences: list[dict]) -> list[dict]:
-    return [
-        {
-            "type": "EXTRACT_DETERMINISTIC_SUBSTEP",
-            "title": " → ".join(p["steps"]),
-            "action": "Combine these steps into one scripted step",
-            "evidence": f"{p['occurrences']}× in {p['runs']} runs · {p['llm_calls_between_steps']} LLM calls between steps",
+    """Repeated step sequences, in two honest flavors: a fixed procedure
+    (the next step follows virtually every time -- extract it into a
+    script) vs. a recurring shape the model steers (the steps vary; a
+    skill or single command covering the shape removes the round-trips)."""
+    out = []
+    for p in sequences:
+        if p["llm_calls_between_steps"] <= 0:
+            continue
+        base = {
+            # the title shows one real occurrence's actual arguments, so the
+            # customer sees what was grepped / sedded / edited -- the tool
+            # names alone say nothing about the work
+            "title": (
+                " → ".join(_step_signature(s) for s in p["example"]) if p.get("example") else " → ".join(p["steps"])
+            ),
             "nodes": list(p["steps"]),
             "observations": p["occurrences"],
             "saving": p["cost_between_steps"],
+            "saving_tokens": p["tokens_between_steps"],
+            "saving_llm_calls": p["llm_calls_between_steps"],
             "observed_cost": p["sequence_cost"],
+            # one real occurrence, so the customer sees what the pattern
+            # actually does -- not just the tool names
+            "example": p.get("example"),
         }
-        for p in sequences
-        if p["llm_calls_between_steps"] > 0
-    ]
+        rate = p.get("transition_rate")
+        if rate is not None and rate >= SCRIPTED_TRANSITION_RATE:
+            out.append(
+                {
+                    **base,
+                    "type": "EXTRACT_DETERMINISTIC_SUBSTEP",
+                    "action": "Combine these steps into one scripted step",
+                    "evidence": (
+                        f"{p['occurrences']}× in {p['runs']} runs · the next step follows "
+                        f"{rate:.0%} of the time · {p['llm_calls_between_steps']} LLM calls"
+                        + (f" · {p['tokens_between_steps']:,} tokens" if p["tokens_between_steps"] else "")
+                        + " between steps"
+                    ),
+                }
+            )
+        else:
+            follow = f"{rate:.0%} of the time" if rate is not None else "each transition"
+            out.append(
+                {
+                    **base,
+                    "type": "REPEATED_AGENT_PATTERN",
+                    "action": (
+                        "Tune how the agent steps: batch these into one call where possible "
+                        "(e.g. one shell command instead of search, then modify, then write), "
+                        "or route these low-judgment 'what's next' calls to a cheaper model"
+                    ),
+                    "evidence": (
+                        f"{p['occurrences']}× in {p['runs']} runs · the model chooses the next step "
+                        f"({follow}) · {p['llm_calls_between_steps']} LLM calls"
+                        + (f" · {p['tokens_between_steps']:,} tokens" if p["tokens_between_steps"] else "")
+                        + " between steps"
+                    ),
+                }
+            )
+    return out
 
 
 def _words(name: str) -> list[list[str]]:
@@ -101,6 +173,7 @@ def _cache_opportunities(calls: list[dict], names: dict[str, set[str]]) -> list[
             "nodes": [c["node"]],
             "observations": c["count"],
             "saving": c["cost_with_decision"] * c["redundant_calls"] / c["count"],
+            "saving_tokens": c["tokens_with_decision"] * c["redundant_calls"] / c["count"],
             "observed_cost": c["cost_with_decision"],
         }
         for c in calls
@@ -132,7 +205,11 @@ def _fingerprint_opportunities(stats: list[ActionStats], llm_nodes: set[tuple[st
                 }
             )
         for g in fp["groups"]:
-            if g["verdict"] != "consistent" or g["observations"] < MIN_BYPASS_OBSERVATIONS or g["avg_cost"] <= 0:
+            # Worth replacing only when the repeated choice cost something --
+            # money when the traces record it, tokens otherwise.
+            if g["verdict"] != "consistent" or g["observations"] < MIN_BYPASS_OBSERVATIONS:
+                continue
+            if g["avg_cost"] <= 0 and g.get("avg_tokens", 0) <= 0:
                 continue
             found.append(
                 {
@@ -145,6 +222,7 @@ def _fingerprint_opportunities(stats: list[ActionStats], llm_nodes: set[tuple[st
                     "nodes": [s.node],
                     "observations": g["observations"],
                     "saving": g["avg_cost"] * (g["observations"] - 1),
+                    "saving_tokens": g.get("avg_tokens", 0.0) * (g["observations"] - 1),
                     "observed_cost": g["total_cost"],
                 }
             )
@@ -167,7 +245,14 @@ def find_opportunities(
         + _cache_opportunities(repetition["calls"], tool_names)
         + _fingerprint_opportunities(stats, llm_nodes)
     )
-    opportunities.sort(key=lambda o: (o["saving"] is None, -(o["saving"] or 0), -o["observed_cost"]))
+    opportunities.sort(
+        key=lambda o: (
+            o["saving"] is None,
+            -(o["saving"] or 0),
+            -(o.get("saving_tokens") or 0),
+            -o["observed_cost"],
+        )
+    )
     return opportunities
 
 
@@ -188,7 +273,8 @@ def build_summary(events: list[TraceEvent], workflow: str, repetition: dict, sta
         "optimization_types": OPTIMIZATION_TYPES,
         "notes": (
             "Savings are the observed cost of calls that would not have run -- measured from these traces, "
-            "not a forecast. Opportunities can overlap (a cached call may sit inside a scripted sequence), "
-            "so don't add them up as a guaranteed total."
+            "not a forecast. When the traces record no cost, savings are in tokens instead "
+            "(`saving_tokens`, `saving_llm_calls`). Opportunities can overlap (a cached call may sit inside "
+            "a scripted sequence), so don't add them up as a guaranteed total."
         ),
     }

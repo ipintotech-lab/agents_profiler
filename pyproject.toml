@@ -19,11 +19,12 @@ dependencies = [
     "zstandard>=0.22; python_version < '3.14'",  # .zst Hugging Face trace files; 3.14+ has compression.zstd
 ]
 
-[project.optional-dependencies]
-dev = ["pytest>=7.4", "httpx2>=2.0"]
-
-[tool.setuptools.packages.find]
-where = ["src"]
+[dependency-groups]
+dev = ["pytest>=7.4", "httpx>=0.27", "pytest-xdist>=3.5"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+addopts = "-n auto"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -243,6 +243,7 @@ def calculate_group_statistics(events: list[TraceEvent]) -> dict:
     dominant, dominant_count = outputs.most_common(1)[0]
     agreement = sum(c * (c - 1) for c in outputs.values()) / (n * (n - 1)) if n > 1 else 1.0
     total_cost = sum(e.cost for e in events)
+    total_tokens = sum(e.tokens.input + e.tokens.output for e in events)
     return {
         "observations": n,
         "sessions": len({e.trace_id for e in events}),
@@ -256,6 +257,8 @@ def calculate_group_statistics(events: list[TraceEvent]) -> dict:
         "verdict": "differs" if len(outputs) > 1 else ("consistent" if n > 1 else "seen_once"),
         "total_cost": total_cost,
         "avg_cost": total_cost / n,
+        "total_tokens": total_tokens,
+        "avg_tokens": total_tokens / n,
     }
 
 

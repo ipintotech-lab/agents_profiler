@@ -35,6 +35,7 @@ from ingest import DEFAULT_DEMAND_MODEL, normalize_raw_json, parse_raw_text
 from ingest.huggingface import fetch_records, list_data_files, parse_hf_url
 from ingest.trace_schema import TraceEvent
 from profiler import history, run_pipeline, run_poc, run_sweep
+from profiler.sweep import _build_cases
 from profiler.behavior import OUTPUT_MATCHES, build_behavior
 from profiler.finops import build_finops
 from rawdata_gen import (
@@ -455,12 +456,14 @@ def validate_seed_range(req: ValidateSeedRangeRequest) -> dict:
 
 
 @app.post("/run_sweep")
-def run_sweep_endpoint(seed: int = 1) -> dict:
+def run_sweep_endpoint(seed: int = 1, max_cases: int | None = None) -> dict:
     """Regression/stress-test the pipeline across a grid of agent counts,
     variances, demand models, total_lines volumes (1000-10000), and
     formula overrides -- a QA tool for the dashboard's "Run tests" tab,
-    not something an end user tunes by hand."""
-    return run_sweep(seed=seed)
+    not something an end user tunes by hand. ``max_cases`` truncates the
+    grid for a quick smoke run."""
+    cases = _build_cases()[:max_cases] if max_cases else None
+    return run_sweep(seed=seed, cases=cases)
 
 
 POC_MAX_SEED_COUNT = 10

@@ -119,3 +119,58 @@ def test_has_side_effect_reads_the_operation_name():
                  "search__web_search", "assign_rep", "check_job_status"):
         assert not has_side_effect(name), name
 
+
+
+def test_fixed_checklist_is_scriptable_but_model_steered_shape_is_not():
+    """A sequence whose steps always follow each other is a fixed procedure
+    (EXTRACT_DETERMINISTIC_SUBSTEP); one where the model chooses between
+    options is only a recurring shape (REPEATED_AGENT_PATTERN)."""
+    from profiler.opportunities import _sequence_opportunities
+
+    # checklist: fetch -> lint -> test, every run, no branching
+    def checklist(run_id):
+        return [
+            _router(run_id), _tool(run_id, "fetch"),
+            _router(run_id), _tool(run_id, "lint"),
+            _router(run_id), _tool(run_id, "test"),
+        ]
+
+    # shape: search is followed by edit in half the runs and by read in the
+    # other half -- the model chooses, so search -> edit is not a script
+    def steered(run_id, second):
+        return [
+            _router(run_id), _tool(run_id, "search", q=run_id),
+            _router(run_id), _tool(run_id, second),
+        ]
+
+    events = [e for run in ("r1", "r2", "r3", "r4") for e in checklist(run)]
+    events += [e for run, second in (("s1", "edit"), ("s2", "read"), ("s3", "edit"), ("s4", "read"),
+                                      ("s5", "edit"), ("s6", "read")) for e in steered(run, second)]
+
+    ops = {tuple(o["nodes"]): o for o in _sequence_opportunities(repeated_sequences(events))}
+    script = ops[("fetch", "lint", "test")]
+    assert script["type"] == "EXTRACT_DETERMINISTIC_SUBSTEP"
+    assert "100% of the time" in script["evidence"]
+
+    shape = ops[("search", "edit")]
+    assert shape["type"] == "REPEATED_AGENT_PATTERN"
+    assert "50% of the time" in shape["evidence"]
+    assert "batch" in shape["action"] and "cheaper model" in shape["action"]
+    assert shape["example"][0]["node"] == "search"  # a real occurrence travels with the finding
+
+
+def test_sequence_title_shows_the_actual_arguments_not_just_tool_names():
+    """``Bash: grep → Bash: sed`` says nothing about the work; the title must
+    show a real occurrence's commands (``grep -n x file`` …), so a customer
+    can tell what was actually done."""
+    from profiler.opportunities import _sequence_opportunities
+
+    def run(run_id):
+        return [
+            _router(run_id), _tool(run_id, "Bash: grep", command=f'grep -n "{run_id}" src/app.tsx'),
+            _router(run_id), _tool(run_id, "Bash: sed", command=f"sed -i 's/{run_id}/x/' src/app.tsx"),
+        ]
+
+    events = [e for r in ("r1", "r2", "r3") for e in run(r)]
+    (op,) = [o for o in _sequence_opportunities(repeated_sequences(events)) if o["nodes"] == ["Bash: grep", "Bash: sed"]]
+    assert op["title"] == 'grep -n "r1" src/app.tsx → sed -i \'s/r1/x/\' src/app.tsx'

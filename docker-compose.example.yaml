@@ -1,0 +1,19 @@
+# Example: run the agents_profiler service (API + dashboard on http://localhost:8000).
+#
+#   docker compose -f docker-compose.example.yaml up -d --build
+#
+# The development setup (live-reload watch mode) lives in .dev/docker-compose.yaml.
+services:
+  agents-profiler:
+    build: .
+    ports:
+      - "8000:8000"
+    # environment:
+    #   HF_TOKEN: ${HF_TOKEN}          # optional, for /ingest Hugging Face fetches
+    #   BEHAVIOR_DB: /app/data/behavior.db
+    volumes:
+      - behavior-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  behavior-data:

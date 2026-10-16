@@ -6,3 +6,10 @@ __pycache__/
 .ruff_cache/
 build/
 data/behavior.sqlite*
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# local agent/session artifacts
+.pi/
+.dev/

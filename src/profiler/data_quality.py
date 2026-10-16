@@ -33,7 +33,7 @@ _ATTRIBUTES = [
         "cost ($)",
         "llm",
         lambda e: e.cost > 0,
-        "Savings show $0, so opportunities are ranked by how often they repeat instead of by money.",
+        "Savings show $0, so opportunities are ranked by repeated tokens and frequency instead of money -- set a price to see dollars.",
     ),
     (
         "llm_latency",

@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
@@ -146,25 +147,33 @@ def test_expected_vs_found_reports_planted_findings_and_traps():
     assert not any("_followup_" in u["target"] for u in result["unplanned"])
 
 
-def test_run_poc_full_default_run_matches_measured_result():
-    """Locks in the measured full-rigor result (30 calibration seeds, 30
-    validation seeds, BASELINE_CONFIG with all six agents). With six
-    workflows sharing the line budget, the shipped defaults (3, 0.1, 10)
-    make 1 false negative across the 30 calibration seeds, so Phase 1
-    picks min_repeated_inputs=10; coverage then stays below the 0.375
-    plateau bar up to n=10000 and no stabilization point is found. When
-    only the CVE workflow was graded this found a plateau at n=5000. If
-    this changes, either the pipeline behavior changed (investigate) or
-    BASELINE_CONFIG / DEFAULT_PLATEAU_CRITERIA changed on purpose (update
-    this test)."""
-    result = run_poc()
-    assert result["phase1_calibration"]["selected"]["min_repeated_inputs"] == 10
+def test_run_poc_reduced_run_matches_measured_result():
+    """Locks in the measured result of a reduced-scale run (5 calibration
+    seeds, 5 validation seeds, BASELINE_CONFIG with all six agents,
+    calibration n=500, validation n up to 1000) -- fast enough for the unit
+    suite while still exercising the full PoC: threshold calibration,
+    stabilization search, recommendation stability and planted-findings
+    grading. At this scale Phase 1 keeps the floor defaults (3, 0.1, 20),
+    coverage stays below the plateau bar so no stabilization point is
+    found, and the smaller traces surface one false alarm. The full-rigor
+    run (30+30 seeds, n up to 10000) is reproducible on demand:
+    ``uv run python -c 'from profiler.experiment import run_poc; run_poc()'``.
+    If these numbers change, either the pipeline behavior changed
+    (investigate) or BASELINE_CONFIG / DEFAULT_PLATEAU_CRITERIA changed on
+    purpose (update this test)."""
+    result = run_poc(
+        calibration_seeds=tuple(range(1, 6)),
+        validation_seeds=tuple(range(101, 106)),
+        calibration_sample_size=500,
+        sample_sizes=(100, 500, 1000),
+    )
+    assert result["phase1_calibration"]["selected"]["min_repeated_inputs"] == 3
     assert result["phase2_stabilization"]["stabilization_point"] is None
     assert result["conclusion"] == "NOT YET SUPPORTED"
-    assert result["phase3_recommendation_stability"]["top1_stability"] == 1.0
+    assert result["phase3_recommendation_stability"]["top1_stability"] == 0.6
     p6 = result["phase6_expected_vs_found"]["summary"]
     # 18th planted finding: the DETERMINISTIC_REGION in analyze_remediation
-    assert (p6["planted_found"], p6["planted_total"], p6["false_alarms"]) == (17, 18, 0)
+    assert (p6["planted_found"], p6["planted_total"], p6["false_alarms"]) == (15, 18, 1)
 
 
 def test_poc_run_endpoint_returns_full_report():

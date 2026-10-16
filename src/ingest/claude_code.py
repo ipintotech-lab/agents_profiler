@@ -63,6 +63,9 @@ def bash_operation(command: str) -> str:
     """Name the operation a Bash command performs, e.g.
     ``cd x && .venv/bin/python -m pytest -q`` -> ``python -m pytest``,
     ``git push origin main`` -> ``git push``. Falls back to ``other``."""
+    # Join line continuations first, so a wrapped command's second line
+    # (often starting with a flag) isn't read as its own command.
+    command = command.replace("\\\n", " ")
     segments = [seg.strip() for seg in command.replace("\n", "&&").replace(";", "&&").split("&&")]
     for seg in segments:
         try:
@@ -73,7 +76,11 @@ def bash_operation(command: str) -> str:
             tokens = tokens[1:]  # VAR=value prefixes
         if tokens and tokens[0] in ("timeout",):
             tokens = [t for t in tokens[1:] if not t[:1].isdigit() and not t.startswith("-")] or []
-        if not tokens or tokens[0] in ("cd", "export", "set", "source", "."):
+        # A leading "#" is a comment line, not a program (shlex doesn't
+        # strip comments); a leading "-" is a wrapped command's flag.
+        if not tokens or tokens[0].startswith("#") or tokens[0].startswith("-"):
+            continue
+        if tokens[0] in ("cd", "export", "set", "source", "."):
             continue
         program = PurePosixPath(tokens[0]).name
         rest = [t for t in tokens[1:] if not t.startswith("-")]
@@ -199,6 +206,11 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
     current_prompt: dict[str, str] = {}
     session_root: dict[str, str] = {}
     last_trigger: dict[str, str] = {}
+    # Digest of what the next LLM call reacts to (the prompt, or the tool
+    # results it answers) -- the input a determinism judgment needs, since
+    # the trigger label alone would make every turn-start call look like
+    # the same input.
+    last_reaction: dict[str, str] = {}
     # The user prompt that started the current run, per lane (a subagent's
     # lane starts from the prompt it was given).
     prompt_text: dict[str, str] = {}
@@ -228,20 +240,28 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
                 current_prompt[session] = r["promptId"]
             if r.get("isMeta"):
                 continue
+            # Pair tool results first, so their digests are available as the
+            # recorded input of the LLM call that reacts to them.
+            reactions: list[str] = []
+            for c in r["message"].get("content") or []:
+                if isinstance(c, dict) and c.get("type") == "tool_result" and c.get("tool_use_id") in tool_calls:
+                    call = tool_calls[c["tool_use_id"]]
+                    status = "error" if c.get("is_error") else "success"
+                    tagged = f"{status}:{_digest(c.get('content'))}"
+                    call["result"] = tagged
+                    reactions.append(tagged)
+                    end_ms, start_ms = _ts_ms(r), call.pop("_start_ms", None)
+                    if end_ms is not None and start_ms is not None:
+                        call["latency_ms"] = max(end_ms - start_ms, 0.0)
             last_trigger[lane] = _user_trigger(r, tool_names_by_id)
             # A compaction summary continues the same work; keep the prompt
             # that actually started it.
             text = None if r.get("isCompactSummary") else _prompt_text(r)
             if text is not None:
                 prompt_text[lane] = text
-            for c in r["message"].get("content") or []:
-                if isinstance(c, dict) and c.get("type") == "tool_result" and c.get("tool_use_id") in tool_calls:
-                    call = tool_calls[c["tool_use_id"]]
-                    status = "error" if c.get("is_error") else "success"
-                    call["result"] = f"{status}:{_digest(c.get('content'))}"
-                    end_ms, start_ms = _ts_ms(r), call.pop("_start_ms", None)
-                    if end_ms is not None and start_ms is not None:
-                        call["latency_ms"] = max(end_ms - start_ms, 0.0)
+                reactions.insert(0, _digest(text))
+            if reactions:
+                last_reaction[lane] = "+".join(reactions)
             continue
 
         message = r["message"]
@@ -266,12 +286,16 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
         call = llm_calls.get(message_id)
         if call is None:
             trigger = last_trigger.get(lane, "user_prompt")
+            input_state = {"trigger": trigger}
+            reaction = last_reaction.get(lane)
+            if reaction is not None:
+                input_state["reaction"] = reaction
             call = {
                 **common,
                 "event_type": "decision",
                 "node": f"llm_call ← {trigger.split(' + ')[0].split(':')[0].removesuffix(' (error)')}",
                 "model": model,
-                "input_state": {"trigger": trigger},
+                "input_state": input_state,
                 "trigger": trigger,
                 "_tools": [],
                 "_start_ms": previous_ms,

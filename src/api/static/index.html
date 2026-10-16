@@ -1322,6 +1322,7 @@ pocBtn.addEventListener('click', async () => {
 
 const OPPORTUNITY_LABELS = {
   EXTRACT_DETERMINISTIC_SUBSTEP: 'combine into one scripted step',
+  REPEATED_AGENT_PATTERN: 'collapse the pattern into one step',
   CACHE_RESULT: 'cache the result',
   CONDITIONAL_LLM_BYPASS: 'replace the LLM call with a rule',
   REVIEW_HIDDEN_STATE: 'hidden state',
@@ -2460,11 +2461,15 @@ function renderSummary(data) {
     : `${sm.num_opportunities} opportunities found, showing the top ${opps.length} (at most 5 of each type)` + (top ? `. The largest: <b>${esc(top.title)}</b>, ${money(top.saving)} of observed cost.` : '.');
   const input = inp => inp && Object.keys(inp).length
     ? `<div class="inp">${Object.entries(inp).map(([k, v]) => `<span class="k">${esc(k)}:</span> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}`).join('\n')}</div>` : '';
+  // one real occurrence of a repeated sequence, so the customer sees what
+  // the pattern actually does -- not just the tool names
+  const example = ex => ex && ex.length
+    ? `<div class="inp">${ex.map(s => `<span class="k">${esc(s.node)}</span> ${esc(Object.entries(s.input || {}).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ').slice(0, 120))}`).join('<br>')}</div>` : '';
   // One header per optimization type (in order of its best saving), then its rows.
   const types = [...new Set(opps.map(o => o.type))];
   const row = o => `
     <tr>
-      <td>${esc(o.title)}${input(o.input)}</td>
+      <td>${esc(o.title)}${input(o.input)}${example(o.example)}</td>
       <td>${esc(o.evidence)}</td>
       <td class="num">${o.saving == null ? '<span class="k">—</span>' : money(o.saving)}</td>
       <td>${esc(o.action)}</td>

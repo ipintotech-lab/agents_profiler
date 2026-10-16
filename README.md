@@ -75,7 +75,9 @@ controls — those remain out of scope per the design doc above.
   report's `summary`: totals plus ranked savings opportunities
   (`EXTRACT_DETERMINISTIC_SUBSTEP`, `CACHE_RESULT`,
   `CONDITIONAL_LLM_BYPASS`, `REVIEW_HIDDEN_STATE`), each with its evidence
-  and the observed cost it would remove. `CACHE_RESULT` is never suggested
+  and the observed cost it would remove. When the traces record no cost,
+  savings are in tokens instead (`saving_tokens`, `saving_llm_calls`) and
+  opportunities rank by repeated tokens. `CACHE_RESULT` is never suggested
   for a call whose name says it changes something (create, update, send,
   edit, ...; `has_side_effect`), since skipping it would skip the change.
   The dashboard leads with that
@@ -148,12 +150,15 @@ curl -X POST localhost:8000/generate \
   -d '{"agent_count": 2, "actions_per_agent": [4, 6], "total_lines": 25}'
 ```
 
-`/analyze` also accepts OpenTelemetry OTLP JSON and Claude Code session
-transcripts (`~/.claude/projects/<project>/*.jsonl`), and `-F file=@...`
-can be repeated to analyze several files together. To avoid uploading raw
-session data (prompts, tool outputs, commands), convert locally first --
-`--hash-inputs` replaces every `input_state` value with a hash, which
-leaves determinism results unchanged:
+`/analyze` also accepts OpenTelemetry OTLP JSON, Claude Code session
+transcripts (`~/.claude/projects/<project>/*.jsonl`), and pi session
+transcripts (`~/.pi/agent/sessions/<project>/*.jsonl`) -- harness formats
+are converted by the modules registered in `src/ingest/session_formats.py`
+(adding one is a detector + converter module plus one registration line).
+`-F file=@...` can be repeated to analyze several files together. To avoid
+uploading raw session data (prompts, tool outputs, commands), convert
+locally first -- `--hash-inputs` replaces every `input_state` value with a
+hash, which leaves determinism results unchanged:
 
 ```bash
 python -m ingest.convert ~/.claude/projects/<project>/*.jsonl --hash-inputs -o traces.jsonl
@@ -302,7 +307,8 @@ behavior regions found (`regions`) and whether the planted one was among them
 ### When the data is incomplete
 
 Trace sources record different things: Claude Code transcripts have tokens,
-cost, timing and real tool inputs; `cx-cmu/agent_trajectories` has no
+cost, timing and real tool inputs; pi transcripts have tokens and per-message
+cost but no timing for tool results that never returned; `cx-cmu/agent_trajectories` has no
 tokens, cost or timing; FreeInference has anonymized inputs and no cost.
 Missing attributes would otherwise just read as 0, so the report opens with a
 notice listing what is missing and which numbers that empties (the
@@ -401,13 +407,20 @@ Note: `pulp>=3` ships a Rust backend with a variable-multiplication bug
 ```bash
 PYTHONPATH=src python3 examples/capacity_allocation_demo.py
 PYTHONPATH=src python3 examples/agent_workflow_demo.py
-pytest
+uv run pytest   # parallel (xdist -n auto); unit tests run in seconds, no network
 ```
 
 Or as an HTTP service:
 
 ```bash
 PYTHONPATH=src uvicorn api.main:app --reload
+```
+
+Or in Docker:
+
+```bash
+docker compose -f docker-compose.example.yaml up -d --build
+```
 curl localhost:8000/examples/capacity-allocation
 ```
 

@@ -95,14 +95,15 @@ def generate_dataset_for_config(config: dict, seed: int) -> tuple[list[TraceEven
     return events, manifest
 
 
-def run_sweep(seed: int = 1) -> dict:
+def run_sweep(seed: int = 1, cases: list[dict] | None = None) -> dict:
     """Run every swept configuration through the full pipeline, each with
     its own freshly-generated dataset (same ``seed`` across configs, for
     reproducibility), and report pass/fail plus timing and a few key
-    output stats per case.
+    output stats per case. ``cases`` overrides the default grid (see
+    ``_build_cases``), e.g. to run a representative subset.
     """
     results = []
-    for case in _build_cases():
+    for case in cases if cases is not None else _build_cases():
         config = case["config"]
         started = time.monotonic()
         row = {

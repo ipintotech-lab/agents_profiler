@@ -58,11 +58,15 @@ def test_claude_code_transcript_converts_to_llm_and_tool_events():
 
     first, second = llm
     assert first.node == "llm_call ← user_prompt"
-    assert first.input_state == {"trigger": "user_prompt"}
+    assert first.input_state["trigger"] == "user_prompt"
+    # the recorded input includes a digest of what the call reacted to (the
+    # prompt), so turn-start calls with different prompts aren't the same input
+    assert first.input_state["reaction"]
     assert first.decision.selected == "Bash: ls"
     assert first.latency_ms == pytest.approx(2000)
     assert second.node == "llm_call ← Bash"
-    assert second.input_state == {"trigger": "Bash: ls"}
+    assert second.input_state["trigger"] == "Bash: ls"
+    assert second.input_state["reaction"]  # digest of the tool result it answered
     assert second.decision.selected == "respond"
     assert second.result == "end_turn"
 

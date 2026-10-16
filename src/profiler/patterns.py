@@ -139,6 +139,19 @@ def repeated_sequences(events: list[TraceEvent]) -> list[dict]:
                         return True
         return False
 
+    # How often each step is directly followed by each other step, across
+    # all of the workflow's runs. A sequence whose steps always follow each
+    # other is a fixed procedure (the LLM calls between them only
+    # rubber-stamp the next step); one where the next step is a real choice
+    # is a recurring shape the model steers.
+    follow: dict[tuple[str, str], int] = defaultdict(int)
+    step_totals: dict[str, int] = defaultdict(int)
+    for steps in runs.values():
+        run_nodes = [s.event.node for s in steps]
+        for a, b in zip(run_nodes, run_nodes[1:]):
+            follow[(a, b)] += 1
+            step_totals[a] += 1
+
     patterns = []
     for key, occ in frequent.items():
         if len(set(key)) == 1 and len(key) > MIN_SEQUENCE_LENGTH:
@@ -155,6 +168,11 @@ def repeated_sequences(events: list[TraceEvent]) -> list[dict]:
         # them) -- meaningful for any trace format, even ones that don't mark
         # routing calls.
         sequence_cost = saving_cost + sum(s.event.cost for run_id, i in occ for s in runs[run_id][i : i + n])
+        # The weakest link decides: how often the whole chain runs as-is,
+        # out of all the times its steps ran at all.
+        transition_rate = (
+            min(follow[(key[i], key[i + 1])] / step_totals[key[i]] for i in range(n - 1)) if n > 1 else 1.0
+        )
         first_run, first_i = occ[0]
         patterns.append(
             {
@@ -166,6 +184,7 @@ def repeated_sequences(events: list[TraceEvent]) -> list[dict]:
                 "tokens_between_steps": saving_tokens,
                 "cost_between_steps": saving_cost,
                 "sequence_cost": sequence_cost,
+                "transition_rate": transition_rate,
                 "example": [_step_summary(s) for s in runs[first_run][first_i : first_i + n]],
                 "_occ": occ,
             }
@@ -216,6 +235,7 @@ def repeated_calls(events: list[TraceEvent]) -> list[dict]:
                 "cost": sum(e.cost for e in group),
                 # Including the LLM calls that chose to run it.
                 "cost_with_decision": sum(e.cost + shares.get(id(e), 0.0) for e in group),
+                "tokens_with_decision": sum(e.tokens.input + e.tokens.output for e in group),
                 "user_inputs": [
                     _display_value(t)
                     for t in dict.fromkeys(e.user_input for e in group if e.user_input is not None)
