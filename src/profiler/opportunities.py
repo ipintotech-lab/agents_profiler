@@ -100,6 +100,8 @@ def _sequence_opportunities(sequences: list[dict]) -> list[dict]:
             "observations": p["occurrences"],
             "saving": p["cost_between_steps"],
             "saving_tokens": p["tokens_between_steps"],
+            "saving_tokens_input": p.get("tokens_between_steps_input", 0),
+            "saving_tokens_output": p.get("tokens_between_steps_output", 0),
             "saving_llm_calls": p["llm_calls_between_steps"],
             "observed_cost": p["sequence_cost"],
             # one real occurrence, so the customer sees what the pattern
@@ -174,6 +176,8 @@ def _cache_opportunities(calls: list[dict], names: dict[str, set[str]]) -> list[
             "observations": c["count"],
             "saving": c["cost_with_decision"] * c["redundant_calls"] / c["count"],
             "saving_tokens": c["tokens_with_decision"] * c["redundant_calls"] / c["count"],
+            "saving_tokens_input": c.get("tokens_with_decision_input", 0) * c["redundant_calls"] / c["count"],
+            "saving_tokens_output": c.get("tokens_with_decision_output", 0) * c["redundant_calls"] / c["count"],
             "observed_cost": c["cost_with_decision"],
         }
         for c in calls
@@ -223,6 +227,8 @@ def _fingerprint_opportunities(stats: list[ActionStats], llm_nodes: set[tuple[st
                     "observations": g["observations"],
                     "saving": g["avg_cost"] * (g["observations"] - 1),
                     "saving_tokens": g.get("avg_tokens", 0.0) * (g["observations"] - 1),
+                    "saving_tokens_input": g.get("avg_tokens_input", 0.0) * (g["observations"] - 1),
+                    "saving_tokens_output": g.get("avg_tokens_output", 0.0) * (g["observations"] - 1),
                     "observed_cost": g["total_cost"],
                 }
             )

@@ -345,18 +345,26 @@ async def finops(
     hf_token: str | None = Form(None),
     output_match: str = Form("exact"),
     runs_per_month: float | None = Form(None),
+    price_input_per_mtok: float | None = Form(None),
+    price_output_per_mtok: float | None = Form(None),
 ) -> dict:
     """AI Agent FinOps view of the uploaded traces (same inputs as
     ``/analyze``): spend across every workflow, avoidable spend as a lower
     bound, and opportunities with a heuristic risk. ``runs_per_month``
-    projects the $ figures from the observed cost per run."""
+    projects the $ figures from the observed cost per run. When the traces
+    record no cost, per-token prices turn token savings into estimated
+    dollars."""
     if output_match not in OUTPUT_MATCHES:
         raise HTTPException(status_code=400, detail=f"output_match must be one of {', '.join(OUTPUT_MATCHES)}")
     if runs_per_month is not None and runs_per_month <= 0:
         raise HTTPException(status_code=400, detail="runs_per_month must be positive")
+    if (price_input_per_mtok is None) != (price_output_per_mtok is None):
+        raise HTTPException(status_code=400, detail="give both token prices, or neither")
     events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
     try:
-        result = await run_in_threadpool(build_finops, events, output_match, runs_per_month)
+        result = await run_in_threadpool(
+            build_finops, events, output_match, runs_per_month, price_input_per_mtok, price_output_per_mtok
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     result["files"] = file_summaries

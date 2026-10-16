@@ -541,6 +541,14 @@ hf auth login</pre>
           <input type="number" id="finopsRunsPerMonth" min="1" step="1" placeholder="e.g. 100000">
         </div>
         <div class="field">
+          <label for="finopsPriceIn">$ / 1M input tokens <span class="hint">when the traces record no cost</span></label>
+          <input type="number" id="finopsPriceIn" min="0" step="any" placeholder="e.g. 3">
+        </div>
+        <div class="field">
+          <label for="finopsPriceOut">$ / 1M output tokens <span class="hint">with the input price, prices the savings</span></label>
+          <input type="number" id="finopsPriceOut" min="0" step="any" placeholder="e.g. 15">
+        </div>
+        <div class="field">
           <label for="finopsOutputMatch">Compare outputs</label>
           <select id="finopsOutputMatch">
             <option value="exact">exact (decision and result)</option>
@@ -1821,6 +1829,12 @@ async function runFinops() {
   }
   const rpm = document.getElementById('finopsRunsPerMonth').value;
   if (rpm) fd.append('runs_per_month', rpm);
+  const priceIn = document.getElementById('finopsPriceIn').value;
+  const priceOut = document.getElementById('finopsPriceOut').value;
+  if (priceIn && priceOut) {
+    fd.append('price_input_per_mtok', priceIn);
+    fd.append('price_output_per_mtok', priceOut);
+  }
   fd.append('output_match', document.getElementById('finopsOutputMatch').value);
   const btn = document.getElementById('finopsBtn');
   btn.disabled = true;
@@ -1851,21 +1865,38 @@ function findingWhere(o) {
 
 function renderFinops(f) {
   const o = f.overview, p = f.projection, c = f.coverage;
+  // Currency: recorded $ when the traces carry cost, estimated $ from token
+  // prices when they don't, raw tokens as the last resort.
+  const tok = n => n == null ? '—' : n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : String(Math.round(n));
+  const has$ = o.spend > 0, est = o.spend_est != null;
+  const cur = has$ ? 'usd' : est ? 'est' : 'tokens';
+  // a saving shown in the current currency: x = {saving, saving_tokens, saving_est}
+  const sav = x => has$ ? usd(x.saving) : est ? (x.saving_est != null ? usd(x.saving_est) : tok(x.saving_tokens)) : tok(x.saving_tokens);
   const monthly = v => p && v != null ? ` <span class="hint">≈ ${usd(v * p.factor)}/mo</span>` : '';
-  document.getElementById('finopsHeadline').innerHTML = o.spend
+  const headline = has$
     ? `At least <b class="warn">${usd(o.avoidable)}</b> of <b>${usd(o.spend)}</b> agent spend (${pctOf(o.avoidable, o.spend)}) went to calls these traces show were avoidable${p ? `: about <b class="warn">${usd(p.avoidable)}</b> a month at ${Number(p.runs_per_month).toLocaleString()} runs.` : '.'}`
-    : 'No cost is recorded in these traces, so spend and savings show as $0. The findings below still say what repeats.';
+    : est
+      ? `These traces record no cost, so savings are <b>estimated</b> from your token prices: at least <b class="warn">${usd(o.avoidable_est)}</b> of an estimated <b>${usd(o.spend_est)}</b> spend (${pctOf(o.avoidable_est, o.spend_est)}) went to calls these traces show were avoidable${p ? `: about <b class="warn">${usd(p.avoidable_est)}</b> a month at ${Number(p.runs_per_month).toLocaleString()} runs.` : '.'}`
+      : (o.avoidable_tokens > 0
+        ? `These traces record no cost, so savings are in tokens: at least <b class="warn">${tok(o.avoidable_tokens)}</b> of <b>${tok(o.tokens)}</b> tokens (${pctOf(o.avoidable_tokens, o.tokens)}) went to calls these traces show were avoidable. Add token prices above to see dollars.`
+        : 'No cost is recorded in these traces and nothing repeated often enough to price. Larger traces usually show more.');
+  document.getElementById('finopsHeadline').innerHTML = headline;
   const top = f.top_waste[0];
   document.getElementById('finopsTakeaway').textContent = top
-    ? `Biggest single saving: ${OPPORTUNITY_LABELS[top.type] || top.type} on ${top.title}${top.where ? ` when ${top.where}` : ''} (${top.workflow}), ${usd(top.saving)} observed, risk ${top.risk}. ${usd(o.ready_saving)} of the avoidable spend is ready to try now.`
+    ? `Biggest single saving: ${OPPORTUNITY_LABELS[top.type] || top.type} on ${top.title}${top.where ? ` when ${top.where}` : ''} (${top.workflow}), ${sav(top)} ${cur === 'usd' ? 'observed' : cur === 'est' ? 'estimated' : 'tokens'}, risk ${top.risk}. ${cur === 'usd' ? usd(o.ready_saving) : cur === 'est' ? usd(o.ready_saving_est) : tok(o.ready_saving_tokens)} of it is ready to try now.`
     : 'No avoidable spend found: nothing repeated often enough to act on. Larger traces usually show more.';
+  const spendCard = has$ ? usd(o.spend) : est ? `≈ ${usd(o.spend_est)}` : `${tok(o.tokens)} tokens`;
+  const avoidCard = has$ ? `${usd(o.avoidable)} <span style="font-size:14px">(${pctOf(o.avoidable, o.spend)})</span>`
+    : est ? `≈ ${usd(o.avoidable_est)} <span style="font-size:14px">(${pctOf(o.avoidable_est, o.spend_est)})</span>`
+    : `${tok(o.avoidable_tokens)} <span style="font-size:14px">(${pctOf(o.avoidable_tokens, o.tokens)})</span>`;
+  const readyCard = has$ ? usd(o.ready_saving) : est ? `≈ ${usd(o.ready_saving_est)}` : `${tok(o.ready_saving_tokens)} tokens`;
   document.getElementById('finopsStats').innerHTML =
-    statCardExplained(usd(o.spend), 'agent spend', `observed in ${o.calls.toLocaleString()} calls over ${o.runs} runs of ${o.workflows} workflow${o.workflows === 1 ? '' : 's'}; ${usd(f.overview.llm_spend)} of it on LLM calls.${monthly(o.spend)}`) +
-    statCardExplained(`${usd(o.avoidable)} <span style="font-size:14px">(${pctOf(o.avoidable, o.spend)})</span>`, 'avoidable, at least', `the cost of observed calls ${o.counted_opportunities} non-overlapping findings would have removed. A minimum: overlapping and unproven savings are left out.${monthly(o.avoidable)}`) +
-    statCardExplained(usd(o.ready_saving), 'ready to try', `the part of the avoidable spend whose findings have plenty of evidence and a low-risk change.${monthly(o.ready_saving)}`) +
+    statCardExplained(spendCard, has$ ? 'agent spend' : est ? 'agent spend (estimated)' : 'agent tokens', `observed in ${o.calls.toLocaleString()} calls over ${o.runs} runs of ${o.workflows} workflow${o.workflows === 1 ? '' : 's'}${has$ ? `; ${usd(f.overview.llm_spend)} of it on LLM calls` : `; ${tok(o.tokens)} tokens, ${o.llm_calls.toLocaleString()} LLM calls`}.${has$ || est ? monthly(has$ ? o.spend : o.spend_est) : ''}`) +
+    statCardExplained(avoidCard, 'avoidable, at least', `the ${has$ ? 'cost' : est ? 'estimated cost' : 'tokens'} of observed calls ${o.counted_opportunities} non-overlapping findings would have removed. A minimum: overlapping and unproven savings are left out.${has$ || est ? monthly(has$ ? o.avoidable : o.avoidable_est) : ''}`) +
+    statCardExplained(readyCard, 'ready to try', `the part of the avoidable ${has$ ? 'spend' : est ? 'spend' : 'tokens'} whose findings have plenty of evidence and a low-risk change.`) +
     statCardExplained(o.opportunities, 'findings', `${f.status_totals.ready.count} ready, ${f.status_totals.review.count} need review, ${f.status_totals.investigate.count} to investigate first (section 05).`) +
-    statCardExplained(`${pctOf(c.llm_calls_with_cost, c.llm_calls)} · ${pctOf(c.calls_with_repeated_input, c.calls)}`, 'data coverage', `LLM calls with a recorded cost · calls whose input was seen more than once. Savings can only be measured on calls with cost, and most findings need repeated inputs.`) +
-    (p ? statCardExplained(usd(p.spend), 'monthly projection', `spend at ${Number(p.runs_per_month).toLocaleString()} runs a month, from the observed cost per run (${p.factor.toFixed(1)}× this data). Assumes the same mix of agents.`) : '');
+    statCardExplained(`${pctOf(c.llm_calls_with_cost, c.llm_calls)} · ${pctOf(c.calls_with_repeated_input, c.calls)}`, 'data coverage', `LLM calls with a recorded cost · calls whose input was seen more than once. Savings can only be measured in $ on calls with cost, and most findings need repeated inputs.`) +
+    (p ? statCardExplained(has$ ? usd(p.spend) : est ? `≈ ${usd(p.spend_est)}` : `${tok(p.avoidable_tokens)} tokens`, 'monthly projection', `spend at ${Number(p.runs_per_month).toLocaleString()} runs a month, from the observed cost per run (${p.factor.toFixed(1)}× this data). Assumes the same mix of agents.`) : '');
   document.getElementById('finopsNotes').textContent = f.notes;
 
   renderFinopsAgents(f);
@@ -1875,7 +1906,7 @@ function renderFinops(f) {
       <td>${i + 1}</td>
       <td>${esc(OPPORTUNITY_LABELS[w.type] || w.type)}<div class="hint">${esc(w.action)}</div></td>
       <td>${findingWhere(w)}</td>
-      <td class="num">${usd(w.saving)}${monthly(w.saving)}</td>
+      <td class="num">${sav(w)}${has$ || est ? monthly(has$ ? w.saving : w.saving_est) : ''}</td>
       <td>${riskPill(w.risk)}<div class="hint">${w.risk_reasons.map(esc).join('; ')}</div></td>
       <td class="hint">${esc(w.evidence)} · evidence ${w.evidence_strength}</td>
     </tr>`).join('') || '<tr><td colspan="6" class="hint">Nothing avoidable found.</td></tr>';
@@ -1886,13 +1917,15 @@ function renderFinops(f) {
     const when = a.regions.length
       ? a.regions.map(r => `<code>${esc(r.where)}</code> <span class="hint">${esc(r.rule_text)} (${Math.round(r.rule_rate * 100)}% vs ${Math.round(r.rest_rate * 100)}%)</span>`).join('<br>')
       : a.deciding_field ? `decided by <code>${esc(a.deciding_field)}</code>` : a.hidden_state ? '<span class="bad">varies for the same input</span>' : '—';
-    const best = a.best ? `${esc(OPPORTUNITY_LABELS[a.best.type] || a.best.type)} <span class="s">${usd(a.best.saving)}</span> ${riskPill(a.best.risk)}` : '—';
+    const best = a.best ? `${esc(OPPORTUNITY_LABELS[a.best.type] || a.best.type)} <span class="s">${sav(a.best)}</span> ${riskPill(a.best.risk)}` : '—';
+    const spendCell = has$ ? `${usd(a.cost.total)}<div class="hint">${pctOf(a.cost.total, totalSpend)} of spend</div>` : `${tok(a.tokens)}<div class="hint">tokens</div>`;
+    const spread = a.cost.total ? `${money(a.cost.avg)} · ${money(a.cost.p50)} · ${money(a.cost.p95)}` : '—';
     return `
     <tr>
       <td><code>${esc(a.node)}</code>${a.is_llm ? ' <span class="hint">LLM</span>' : ''}<div class="hint">${esc(a.workflow)}</div></td>
       <td class="num">${a.observations}</td>
-      <td class="num">${usd(a.cost.total)}<div class="hint">${pctOf(a.cost.total, totalSpend)} of spend</div></td>
-      <td class="num">${a.cost.total ? `${money(a.cost.avg)} · ${money(a.cost.p50)} · ${money(a.cost.p95)}` : '—'}</td>
+      <td class="num">${spendCell}</td>
+      <td class="num">${spread}</td>
       <td class="num">${cons}</td>
       <td>${when}</td>
       <td>${a.models.map(m => esc(m.name)).join(', ') || '—'}</td>
@@ -1908,13 +1941,13 @@ function renderFinops(f) {
     const shown = items.slice(0, 8);
     const sum = key === 'verified'
       ? 'Replay against past calls is not built yet: nothing is verified.'
-      : `${items.length} finding${items.length === 1 ? '' : 's'}${f.status_totals[key] ? ` · ${usd(f.status_totals[key].saving)} counted` : ''}`;
+      : `${items.length} finding${items.length === 1 ? '' : 's'}${f.status_totals[key] ? ` · ${has$ ? usd(f.status_totals[key].saving) : tok(f.status_totals[key].saving_tokens)} counted` : ''}`;
     return `<div class="fo-col"><h3>${esc(label)}</h3><div class="colsum">${sum}</div>${shown.map(x => `
       <div class="fo-card">
         ${riskPill(x.risk)} <span>${esc(OPPORTUNITY_LABELS[x.type] || x.type)}</span>
         <div class="t">${findingWhere(x)}</div>
         <div>${esc(x.action)}</div>
-        <div style="margin-top:4px">${x.saving ? `<span class="${x.counted ? 's' : 'hint'}">${usd(x.saving)}</span>${x.counted ? '' : ' <span class="hint">overlaps a larger finding</span>'}` : '<span class="hint">no direct saving</span>'} · evidence ${x.evidence_strength} (${x.observations})</div>
+        <div style="margin-top:4px">${x.saving || x.saving_tokens ? `<span class="${x.counted ? 's' : 'hint'}">${sav(x)}</span>${x.counted ? '' : ' <span class="hint">overlaps a larger finding</span>'}` : '<span class="hint">no direct saving</span>'} · evidence ${x.evidence_strength} (${x.observations})</div>
         <div class="hint">${x.risk_reasons.map(esc).join('; ')} · ${esc(x.validation)}</div>
       </div>`).join('')}${items.length > shown.length ? `<div class="hint">+ ${items.length - shown.length} more</div>` : ''}</div>`;
   }).join('');
@@ -1923,8 +1956,8 @@ function renderFinops(f) {
     <tr>
       <td><code>${esc(m.model)}</code></td>
       <td class="num">${m.calls.toLocaleString()}</td>
-      <td class="num">${usd(m.spend)}<div class="hint">${pctOf(m.spend, totalSpend)} of spend</div></td>
-      <td class="num">${money(m.avg_cost)}</td>
+      <td class="num">${has$ ? `${usd(m.spend)}<div class="hint">${pctOf(m.spend, totalSpend)} of spend</div>` : `${tok(m.tokens)} tokens`}</td>
+      <td class="num">${has$ ? money(m.avg_cost) : `${tok(m.tokens / m.calls)} tok/call`}</td>
       <td class="hint">${m.workflows.map(esc).join(', ')}</td>
     </tr>`).join('') || '<tr><td colspan="5" class="hint">No LLM calls (no model recorded).</td></tr>';
 
@@ -1939,21 +1972,23 @@ function renderFinops(f) {
 
 function renderFinopsAgents(f) {
   const { key, dir } = finopsAgentSort;
+  const has$ = f.overview.spend > 0;
+  const tok = n => n == null ? '—' : n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : String(Math.round(n));
   const rows = [...f.workflows].sort((a, b) => {
     const x = a[key] ?? -1, y = b[key] ?? -1;
     return (typeof x === 'string' ? x.localeCompare(y) : x - y) * dir;
   });
-  const max = Math.max(...f.workflows.map(w => w.spend), 1e-9);
+  const max = Math.max(...f.workflows.map(w => has$ ? w.spend : w.tokens), 1e-9);
   const proj = f.projection;
   document.getElementById('finopsAgents').tBodies[0].innerHTML = rows.map(w => `
     <tr>
       <td><code>${esc(w.workflow)}</code>${w.agents.length && (w.agents.length > 1 || w.agents[0] !== w.workflow) ? `<div class="hint">${w.agents.map(esc).join(', ')}</div>` : ''}
-        <div class="fo-bar" title="spend ${usd(w.spend)}, avoidable ${usd(w.avoidable)}"><i style="width:${100 * w.spend / max}%"></i><b style="width:${100 * w.avoidable / max}%"></b></div></td>
+        <div class="fo-bar" title="${has$ ? 'spend' : 'tokens'} ${has$ ? usd(w.spend) : tok(w.tokens)}, avoidable ${has$ ? usd(w.avoidable) : tok(w.avoidable_tokens)}"><i style="width:${100 * (has$ ? w.spend : w.tokens) / max}%"></i><b style="width:${100 * (has$ ? w.avoidable : w.avoidable_tokens) / max}%"></b></div></td>
       <td class="num">${w.runs}</td>
-      <td class="num">${usd(w.spend)}${proj ? `<div class="hint">≈ ${usd(w.spend * proj.factor)}/mo</div>` : ''}</td>
-      <td class="num">${money(w.cost_per_run)}</td>
-      <td class="num warn">${usd(w.avoidable)}${proj ? `<div class="hint">≈ ${usd(w.avoidable * proj.factor)}/mo</div>` : ''}</td>
-      <td class="num">${w.avoidable_share != null ? Math.round(w.avoidable_share * 100) + '%' : '—'}</td>
+      <td class="num">${has$ ? usd(w.spend) : tok(w.tokens)}${has$ && proj ? `<div class="hint">≈ ${usd(w.spend * proj.factor)}/mo</div>` : ''}</td>
+      <td class="num">${has$ ? money(w.cost_per_run) : '—'}</td>
+      <td class="num warn">${has$ ? usd(w.avoidable) : tok(w.avoidable_tokens)}${has$ && proj ? `<div class="hint">≈ ${usd(w.avoidable * proj.factor)}/mo</div>` : ''}</td>
+      <td class="num">${has$ ? (w.avoidable_share != null ? Math.round(w.avoidable_share * 100) + '%' : '—') : (w.avoidable_tokens ? Math.round(100 * w.avoidable_tokens / w.tokens) + '%' : '—')}</td>
       <td class="num">${w.opportunities}${w.regions ? `<div class="hint">${w.regions} region${w.regions === 1 ? '' : 's'}</div>` : ''}</td>
     </tr>`).join('');
   [...document.getElementById('finopsAgents').tHead.rows[0].cells].forEach(th => {

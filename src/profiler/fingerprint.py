@@ -244,6 +244,8 @@ def calculate_group_statistics(events: list[TraceEvent]) -> dict:
     agreement = sum(c * (c - 1) for c in outputs.values()) / (n * (n - 1)) if n > 1 else 1.0
     total_cost = sum(e.cost for e in events)
     total_tokens = sum(e.tokens.input + e.tokens.output for e in events)
+    total_tokens_input = sum(e.tokens.input for e in events)
+    total_tokens_output = sum(e.tokens.output for e in events)
     return {
         "observations": n,
         "sessions": len({e.trace_id for e in events}),
@@ -259,6 +261,10 @@ def calculate_group_statistics(events: list[TraceEvent]) -> dict:
         "avg_cost": total_cost / n,
         "total_tokens": total_tokens,
         "avg_tokens": total_tokens / n,
+        "total_tokens_input": total_tokens_input,
+        "total_tokens_output": total_tokens_output,
+        "avg_tokens_input": total_tokens_input / n,
+        "avg_tokens_output": total_tokens_output / n,
     }
 
 

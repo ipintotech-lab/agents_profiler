@@ -43,6 +43,10 @@ class _Step:
     # LLM "choose the next step" calls between the previous step and this one.
     glue_cost: float = 0.0
     glue_tokens: int = 0
+    # input/output split of glue_tokens, so savings can be priced with
+    # per-token prices when the traces record no cost
+    glue_tokens_input: int = 0
+    glue_tokens_output: int = 0
     glue_calls: int = 0
 
 
@@ -67,12 +71,15 @@ def _steps_by_run(events: list[TraceEvent]) -> dict[str, list[_Step]]:
             glue = pending.setdefault(e.run_id, _Step(event=e))
             glue.glue_cost += e.cost
             glue.glue_tokens += e.tokens.input + e.tokens.output
+            glue.glue_tokens_input += e.tokens.input
+            glue.glue_tokens_output += e.tokens.output
             glue.glue_calls += 1
             continue
         glue = pending.pop(e.run_id, None)
         step = _Step(event=e)
         if glue is not None:
             step.glue_cost, step.glue_tokens, step.glue_calls = glue.glue_cost, glue.glue_tokens, glue.glue_calls
+            step.glue_tokens_input, step.glue_tokens_output = glue.glue_tokens_input, glue.glue_tokens_output
         runs[e.run_id].append(step)
     return runs
 
@@ -163,6 +170,8 @@ def repeated_sequences(events: list[TraceEvent]) -> list[dict]:
         inner = [step for run_id, i in occ for step in runs[run_id][i + 1 : i + n]]
         saving_cost = sum(s.glue_cost for s in inner)
         saving_tokens = sum(s.glue_tokens for s in inner)
+        saving_tokens_input = sum(s.glue_tokens_input for s in inner)
+        saving_tokens_output = sum(s.glue_tokens_output for s in inner)
         saving_calls = sum(s.glue_calls for s in inner)
         # Total observed cost of every occurrence (steps + routing between
         # them) -- meaningful for any trace format, even ones that don't mark
@@ -182,6 +191,8 @@ def repeated_sequences(events: list[TraceEvent]) -> list[dict]:
                 "runs": len({run_id for run_id, _ in occ}),
                 "llm_calls_between_steps": saving_calls,
                 "tokens_between_steps": saving_tokens,
+                "tokens_between_steps_input": saving_tokens_input,
+                "tokens_between_steps_output": saving_tokens_output,
                 "cost_between_steps": saving_cost,
                 "sequence_cost": sequence_cost,
                 "transition_rate": transition_rate,
@@ -236,6 +247,8 @@ def repeated_calls(events: list[TraceEvent]) -> list[dict]:
                 # Including the LLM calls that chose to run it.
                 "cost_with_decision": sum(e.cost + shares.get(id(e), 0.0) for e in group),
                 "tokens_with_decision": sum(e.tokens.input + e.tokens.output for e in group),
+                "tokens_with_decision_input": sum(e.tokens.input for e in group),
+                "tokens_with_decision_output": sum(e.tokens.output for e in group),
                 "user_inputs": [
                     _display_value(t)
                     for t in dict.fromkeys(e.user_input for e in group if e.user_input is not None)

@@ -75,3 +75,27 @@ def test_api_finops(demo):
     assert client.post("/finops", files=files, data={"runs_per_month": "0"}).status_code == 400
     assert client.post("/finops", files=files, data={"output_match": "fuzzy"}).status_code == 400
     assert client.post("/finops").status_code == 400
+
+
+def test_token_mode_and_price_estimation_when_cost_is_unrecorded(demo):
+    events, _ = demo
+    # a trace that records tokens but no cost (e.g. a pi session)
+    costless = [e.model_copy(update={"cost": 0.0}) for e in events]
+    f = build_finops(costless)
+    assert f["overview"]["spend"] == 0
+    assert f["overview"]["tokens"] > 0
+    # savings fall back to tokens, and findings are still selected/counted
+    assert f["overview"]["avoidable"] == 0
+    assert f["overview"]["avoidable_tokens"] > 0
+    assert f["overview"]["counted_opportunities"] > 0
+    assert f["top_waste"], "token savings still rank the biggest waste"
+    assert all(w["avoidable_tokens"] >= 0 for w in f["workflows"])
+
+    # per-token prices turn token savings into estimated dollars
+    priced = build_finops(costless, price_input_per_mtok=3.0, price_output_per_mtok=15.0)
+    o = priced["overview"]
+    assert o["spend_est"] > 0
+    assert 0 < o["avoidable_est"] <= o["spend_est"]
+    assert any(o_.get("saving_est") for o_ in priced["opportunities"])
+    # recorded cost always wins over estimation
+    assert build_finops(events, price_input_per_mtok=3.0, price_output_per_mtok=15.0)["overview"]["spend"] > 0

@@ -272,9 +272,17 @@ report's numbered layout: 01 Summary, 02 Expected vs. found, 03 Calibration,
 The FinOps tab (`POST /finops`, in `src/profiler/finops.py`) shows spend
 across all the agents in the data at once. It takes the same inputs as
 `/analyze`: JSON or JSON Lines files, or a Hugging Face link
-(`hf_url`, `hf_limit`, `hf_token`). Its optional fields are `output_match` and
-`runs_per_month`. **Load demo data** generates the six mock agents
+(`hf_url`, `hf_limit`, `hf_token`). Its optional fields are `output_match`,
+`runs_per_month`, and `price_input_per_mtok` / `price_output_per_mtok`.
+**Load demo data** generates the six mock agents
 (5,000 lines, seed 0) and analyzes them.
+
+**Currencies.** Savings are shown in dollars when the traces record cost.
+When they don't (e.g. pi session transcripts, whose providers often report
+$0), the two price fields turn token savings into **estimated** dollars —
+input and output tokens are priced separately, as providers do — and
+without prices the report speaks in tokens (`saving_tokens`,
+`saving_llm_calls`). Recorded cost always wins over estimation.
 
 - **Avoidable spend is a minimum.** The findings are the same ones the report
   makes (scripted sequences, caches, rule bypasses, hidden state, regions).
