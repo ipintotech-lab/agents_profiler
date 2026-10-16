@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import defaultdict
 import random
 import uuid
 from datetime import UTC, datetime
@@ -177,6 +178,37 @@ async def huggingface_files(url: str = Form(...), token: str | None = Form(None)
     return {"repo_id": ref.repo_id, "revision": ref.revision, "files": files}
 
 
+def _run_signature(events: list[TraceEvent]) -> str:
+    """Content hash of one run: id, workflow, user input and the whole
+    (node, input, result) sequence."""
+    payload = [
+        [e.run_id, e.workflow, e.user_input, e.node, e.input_state, e.result] for e in events
+    ]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _drop_runs_already_seen(
+    file_events: list[TraceEvent], seen_runs: set[str]
+) -> tuple[list[TraceEvent], int]:
+    """Remove runs that an earlier file already contributed (resumed-session
+    history), counting each once. Runs are only deduplicated *across* files,
+    never within one -- repetition inside a file is the signal, not an
+    artifact. Returns the kept events and how many runs were dropped."""
+    by_run: dict[str, list[TraceEvent]] = defaultdict(list)
+    for e in file_events:
+        by_run[e.run_id].append(e)
+    kept: list[TraceEvent] = []
+    dropped = 0
+    for run_id, run_events in by_run.items():
+        signature = _run_signature(run_events)
+        if signature in seen_runs:
+            dropped += 1
+            continue
+        seen_runs.add(signature)
+        kept.extend(run_events)
+    return kept, dropped
+
+
 async def _load_events(
     file: list[UploadFile] | None, hf_url: str | None, hf_file: str | None, hf_limit: int, hf_token: str | None
 ) -> tuple[list[TraceEvent], list[dict]]:
@@ -185,6 +217,12 @@ async def _load_events(
     events: list[TraceEvent] = []
     file_summaries: list[dict] = []
     seen_digests: dict[str, str] = {}
+    # Resumed sessions copy their history into a new file, so the same run
+    # can arrive inside two uploads. A run is the same run when its id,
+    # workflow, user input and whole event sequence match -- a genuine
+    # repeat habit has different content or different ids, so it is never
+    # collapsed.
+    seen_runs: set[str] = set()
     if not file and not hf_url:
         raise HTTPException(status_code=400, detail="upload a trace file or give a Hugging Face dataset link")
     for upload in file or []:
@@ -195,8 +233,11 @@ async def _load_events(
             raise HTTPException(status_code=400, detail=f"{name} has the same content as {seen_digests[digest]}")
         seen_digests[digest] = name
         file_events = _parse_trace_events(raw, name)
-        events.extend(file_events)
-        file_summaries.append({"name": name, "num_events": len(file_events)})
+        kept, duplicates = _drop_runs_already_seen(file_events, seen_runs)
+        events.extend(kept)
+        file_summaries.append(
+            {"name": name, "num_events": len(kept), **({"duplicate_runs": duplicates} if duplicates else {})}
+        )
     if hf_url:
         if not 1 <= hf_limit <= HF_MAX_LIMIT:
             raise HTTPException(status_code=400, detail=f"hf_limit must be between 1 and {HF_MAX_LIMIT}")

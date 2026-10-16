@@ -127,3 +127,55 @@ def test_compute_formula_for_all_workflows_reports_error_for_workflow_without_ll
 
     assert "provenance" in per_workflow["wf-a"]
     assert "error" in per_workflow["wf-b"]
+
+
+def test_multi_file_analyze_counts_resumed_session_runs_once():
+    """Uploading several session files analyzes them as one corpus; a run
+    whose whole content already arrived in an earlier file (resumed-session
+    history) is counted once, while genuine repetition inside a file is
+    never collapsed."""
+    import io
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from api.main import app
+
+    def row(run_id, node, event_type="tool_call", **extra):
+        return {
+            "trace_id": "t", "run_id": run_id, "workflow": "wf", "agent": "a",
+            "event_type": event_type, "node": node, **extra,
+        }
+
+    def router(run_id):
+        return row("wf-router" if False else run_id, "llm_call", event_type="decision",
+                   model="m", decision={"type": "next_action", "selected": "fetch"},
+                   tokens={"input": 10, "output": 2})
+
+    # file A: two runs; run r1 is also (fully) inside file B -- a resume
+    file_a = "\n".join(json.dumps(r) for r in [
+        router("r1"), row("r1", "fetch"), row("r1", "lint"),
+        router("r2"), row("r2", "fetch"), row("r2", "lint"),
+    ])
+    file_b = "\n".join(json.dumps(r) for r in [
+        router("r1"), row("r1", "fetch"), row("r1", "lint"),  # copied history from the resume
+        router("r3"), row("r3", "fetch"), row("r3", "lint"),
+    ])
+
+    client = TestClient(app)
+    resp = client.post(
+        "/analyze",
+        files=[
+            ("file", ("a.jsonl", io.BytesIO(file_a.encode()), "application/jsonl")),
+            ("file", ("b.jsonl", io.BytesIO(file_b.encode()), "application/jsonl")),
+        ],
+    )
+    assert resp.status_code == 200, resp.text
+    report = resp.json()
+    # r1 counted once: 3 distinct runs, not 4
+    assert report["summary"]["totals"]["runs"] == 3
+    files = report["observe"]["files"]
+    assert files[1]["duplicate_runs"] == 1
+    # repetition inside a file is the signal, never collapsed: fetch+lint
+    # with identical inputs still show up as repeated calls
+    assert report["repetition"]["calls"], "within-file repetition must survive the dedup"

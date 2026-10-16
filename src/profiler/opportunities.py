@@ -8,6 +8,7 @@ the cost of the observed calls that would not have run, not a forecast.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 
@@ -52,6 +53,15 @@ WRITE_VERBS = frozenset({"log", "page", "notify", "trigger", "schedule", "apply"
 # "the agent read this" from "the agent printed a marker".
 MIN_CACHEABLE_RESULT_CHARS = 80
 
+
+def _pattern_id(o_type: str, *identity) -> str:
+    """A stable ID for one finding, so two analyses of two time windows
+    can match "pattern A in January" to "pattern A in February" -- the
+    spine of the verify-savings loop. Keys on what makes the pattern
+    itself (type + nodes / input / trigger), never on when it ran or how
+    often: the same habit next month gets the same ID."""
+    return hashlib.sha1("|".join((o_type, *(str(i) for i in identity))).encode()).hexdigest()[:12]
+
 # Plain-language meaning of each optimization type, shown next to the name.
 OPTIMIZATION_TYPES = {
     "EXTRACT_DETERMINISTIC_SUBSTEP": "The same steps run in the same order again and again -- the next step follows virtually every time, so the LLM calls between them only rubber-stamp it. Turning them into one script removes those calls.",
@@ -90,6 +100,10 @@ def _sequence_opportunities(sequences: list[dict]) -> list[dict]:
                 " → ".join(p["signature"]) if p.get("signature") else " → ".join(p["steps"])
             ),
             "nodes": list(p["steps"]),
+            # stable across analyses: the same habit in next month's traffic
+            # gets the same ID (keys on the step nodes, not the example's
+            # arguments, which vary by task)
+            "pattern_id": _pattern_id("SEQUENCE", *p["steps"]),
             "observations": p["occurrences"],
             "saving": p["cost_between_steps"],
             "saving_tokens": p["tokens_between_steps"],
@@ -102,6 +116,9 @@ def _sequence_opportunities(sequences: list[dict]) -> list[dict]:
             "example": p.get("example"),
         }
         rate = p.get("transition_rate")
+        where = f"{p['occurrences']}× in {p['runs']} runs" + (
+            f" across {p['sessions']} sessions" if p.get("sessions", 1) > 1 else ""
+        )
         if rate is not None and rate >= SCRIPTED_TRANSITION_RATE:
             out.append(
                 {
@@ -109,7 +126,7 @@ def _sequence_opportunities(sequences: list[dict]) -> list[dict]:
                     "type": "EXTRACT_DETERMINISTIC_SUBSTEP",
                     "action": "Combine these steps into one scripted step",
                     "evidence": (
-                        f"{p['occurrences']}× in {p['runs']} runs · the next step follows "
+                        f"{where} · the next step follows "
                         f"{rate:.0%} of the time · {p['llm_calls_between_steps']} LLM calls"
                         + (f" · {p['tokens_between_steps']:,} tokens" if p["tokens_between_steps"] else "")
                         + " between steps"
@@ -128,7 +145,7 @@ def _sequence_opportunities(sequences: list[dict]) -> list[dict]:
                         "or route these low-judgment 'what's next' calls to a cheaper model"
                     ),
                     "evidence": (
-                        f"{p['occurrences']}× in {p['runs']} runs · the model chooses the next step "
+                        f"{where} · the model chooses the next step "
                         f"({follow}) · {p['llm_calls_between_steps']} LLM calls"
                         + (f" · {p['tokens_between_steps']:,} tokens" if p["tokens_between_steps"] else "")
                         + " between steps"
@@ -163,6 +180,9 @@ def _cache_opportunities(calls: list[dict], names: dict[str, set[str]]) -> list[
             "type": "CACHE_RESULT",
             "title": c["node"],
             "input": c["input"],
+            # stable across analyses: the same cached call next month keeps
+            # its ID (node + what it was called with)
+            "pattern_id": _pattern_id("CACHE", c["node"], json.dumps(c["input"], sort_keys=True, default=str)),
             "action": "Reuse the first result, or skip the repeat",
             "evidence": f"{c['count']}× with identical input, same output every time · {c['redundant_calls']} repeats",
             "nodes": [c["node"]],
@@ -196,6 +216,7 @@ def _fingerprint_opportunities(stats: list[ActionStats], llm_nodes: set[tuple[st
                 {
                     "type": "REVIEW_HIDDEN_STATE",
                     "title": s.node,
+                    "pattern_id": _pattern_id("HIDDEN_STATE", s.agent, s.node),
                     "action": "Find what changes the result: a flaky tool, or state the traces don't capture",
                     "evidence": fp["variance"]["explanation"],
                     "nodes": [s.node],
@@ -218,6 +239,9 @@ def _fingerprint_opportunities(stats: list[ActionStats], llm_nodes: set[tuple[st
                 {
                     "type": "CONDITIONAL_LLM_BYPASS",
                     "title": s.node,
+                    "pattern_id": _pattern_id(
+                        "BYPASS", s.node, g["trigger"], json.dumps(g["input"], sort_keys=True, default=str)
+                    ),
                     "input": g["input"],
                     "trigger": g["trigger"],
                     "action": f"Replace the LLM call with a rule that returns {g['dominant_output']}",

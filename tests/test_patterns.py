@@ -254,3 +254,63 @@ def test_hidden_state_is_a_tool_finding_not_an_llm_one():
     rep = find_repetition(llm_events, "wf")
     found = find_opportunities(llm_events, "wf", rep, mine(llm_events, "wf"))
     assert all(o["type"] != "REVIEW_HIDDEN_STATE" for o in found)
+
+
+def test_pattern_ids_are_stable_across_analyses_and_key_on_identity():
+    """The verification loop matches 'pattern A in January' to 'pattern A
+    in February' by pattern_id: same habit -> same id, and re-analyzing
+    different traffic from the same habit keeps the id. The id keys on the
+    pattern's identity (nodes), never on when it ran or how often."""
+    from profiler.mine import mine
+    from profiler.opportunities import find_opportunities
+
+    def corpus(salt):
+        # two sessions (trace ids), the same git habit in both
+        events = []
+        for trace, runs in (("s1", ("r1", "r2", "r3")), ("s2", ("r4", "r5", "r6"))):
+            for run in runs:
+                events.append(
+                    TraceEvent(
+                        trace_id=trace, run_id=run, workflow="wf", agent="a", event_type="decision",
+                        node="llm_call", model="m", decision={"type": "next_action", "selected": "x"},
+                        tokens={"input": 100, "output": 10}, user_input=f"do {run} {salt}",
+                    )
+                )
+                for step in ("git add", "git commit", "git push"):
+                    events.append(
+                        TraceEvent(
+                            trace_id=trace, run_id=run, workflow="wf", agent="a",
+                            event_type="decision", node="llm_call", model="m",
+                            decision={"type": "next_action", "selected": step},
+                            tokens={"input": 100, "output": 10},
+                        )
+                    )
+                    events.append(
+                        TraceEvent(
+                            trace_id=trace, run_id=run, workflow="wf", agent="a",
+                            event_type="tool_call", node=step, input_state={"cmd": step},
+                        )
+                    )
+        return events
+
+    jan = corpus("jan")
+    feb = corpus("feb")
+    a = find_opportunities(jan, "wf", find_repetition(jan, "wf"), mine(jan, "wf"))
+    b = find_opportunities(feb, "wf", find_repetition(feb, "wf"), mine(feb, "wf"))
+    seq_a = next(o for o in a if o["type"] == "EXTRACT_DETERMINISTIC_SUBSTEP")
+    seq_b = next(o for o in b if o["type"] == "EXTRACT_DETERMINISTIC_SUBSTEP")
+    assert seq_a["pattern_id"] == seq_b["pattern_id"], "same habit, different month: ids must match"
+    ids = [o["pattern_id"] for o in a]
+    assert len(ids) == len(set(ids)), "ids must be unique within a report"
+
+    # cross-session evidence: the habit spans both sessions
+    assert "2 sessions" in seq_a["evidence"]
+
+    # a different habit (different steps) gets a different id
+    other = [e for e in feb]
+    for e in other:
+        if e.node == "git push":
+            e.node = "git ship"
+    c = find_opportunities(other, "wf", find_repetition(other, "wf"), mine(other, "wf"))
+    seq_c = next(o for o in c if o["type"] == "EXTRACT_DETERMINISTIC_SUBSTEP")
+    assert seq_c["pattern_id"] != seq_a["pattern_id"]

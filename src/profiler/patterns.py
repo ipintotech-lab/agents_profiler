@@ -180,6 +180,12 @@ def repeated_sequences(events: list[TraceEvent]) -> list[dict]:
             step_totals[a] += 1
 
     patterns = []
+    # a run belongs to one session (trace); cross-session recurrence is
+    # the strongest habit signal, so patterns say how many sessions they
+    # spanned
+    run_trace = {}
+    for e in events:
+        run_trace.setdefault(e.run_id, e.trace_id)
     for key, occ in frequent.items():
         if len(set(key)) == 1 and len(key) > MIN_SEQUENCE_LENGTH:
             continue  # "X, X, X" adds nothing over "X, X"
@@ -210,6 +216,7 @@ def repeated_sequences(events: list[TraceEvent]) -> list[dict]:
                 "length": n,
                 "occurrences": len(occ),
                 "runs": len({run_id for run_id, _ in occ}),
+                "sessions": len({run_trace[run_id] for run_id, _ in occ}),
                 "llm_calls_between_steps": saving_calls,
                 "tokens_between_steps": saving_tokens,
                 "tokens_between_steps_input": saving_tokens_input,
@@ -264,6 +271,7 @@ def repeated_calls(events: list[TraceEvent]) -> list[dict]:
                 "input": {k: _display_value(v) for k, v in group[0].input_state.items()},
                 "count": len(group),
                 "runs": len({e.run_id for e in group}),
+                "sessions": len({e.trace_id for e in group}),
                 "distinct_outputs": len(outcomes),
                 "same_output": same_output,
                 "redundant_calls": len(group) - 1 if same_output else 0,

@@ -2077,12 +2077,14 @@ function render(data) {
 
   // Observe
   const ob = data.observe;
+  const dupRuns = (ob.files || []).reduce((t, f) => t + (f.duplicate_runs || 0), 0);
   document.getElementById('observeStats').innerHTML =
     statCard(ob.num_events, 'events') +
     statCard(ob.num_agents, 'agents') +
     statCard(ob.num_workflows, 'workflows') +
     statCard(ob.selected_workflow, 'analyzed workflow') +
-    (ob.files && ob.files.length > 1 ? statCard(ob.files.length, 'files') : '');
+    (ob.files && ob.files.length > 1 ? statCard(ob.files.length, 'files') +
+      statCard(dupRuns, 'runs counted once<span class="hint">resumed-session copies</span>') : '');
   const wfBody = document.querySelector('#workflowTable tbody');
   wfBody.innerHTML = ob.workflows.map(w => `<tr><td>${esc(w.name)}</td><td class="num">${w.num_events}</td><td class="num">${w.num_runs}</td></tr>`).join('');
 
@@ -2209,7 +2211,7 @@ function render(data) {
       <td>${(p.signature || p.steps).map(st => `<span class="oc"><b>${esc(st)}</b></span>`).join('→ ')}
         <div class="hint">${fixed ? 'fixed procedure — the model only rubber-stamps the next step' : 'the model chooses the next step'}</div></td>
       <td class="num">${p.occurrences}</td>
-      <td class="num">${p.runs}</td>
+      <td class="num">${p.runs}${p.sessions > 1 ? `<div class="hint">in ${p.sessions} sessions</div>` : ''}</td>
       <td class="num">${p.transition_rate != null ? Math.round(p.transition_rate * 100) + '%' : '—'}</td>
       <td class="num">${p.llm_calls_between_steps}</td>
       <td class="num">${p.tokens_between_steps.toLocaleString()}</td>
@@ -2525,7 +2527,8 @@ function renderSummary(data) {
     statCard(t.llm_calls.toLocaleString(), 'LLM calls') +
     statCard(t.tool_calls.toLocaleString(), 'tool calls') +
     statCard(t.tokens.toLocaleString(), 'tokens') +
-    statCard(t.runs.toLocaleString(), 'runs');
+    statCard(t.runs.toLocaleString(), 'runs') +
+    (t.sessions > 1 ? statCard(t.sessions.toLocaleString(), 'sessions') : '');
   const opps = sm.opportunities;
   // The one-page answer: what you repeatedly do, what it costs, the fix.
   const SHORT_FIX = {
@@ -2580,7 +2583,8 @@ function seqTakeaway(seqs) {
     ? `${top.llm_calls_between_steps} LLM calls (${money(top.cost_between_steps)})`
     : `${top.llm_calls_between_steps} LLM calls (${tok(top.tokens_between_steps)} tokens)`;
   const fixed = top.transition_rate != null && top.transition_rate >= 0.9;
-  return `Most expensive repeat: <b>${esc((top.signature || top.steps).join(' → '))}</b>, ${top.occurrences}× in ${top.runs} runs, with ${saving} spent only on picking the next step — ${fixed ? 'a fixed procedure the model rubber-stamps' : 'a shape the model steers'}.`;
+  const across = top.sessions > 1 ? ` across ${top.sessions} sessions` : '';
+  return `Most expensive repeat: <b>${esc((top.signature || top.steps).join(' → '))}</b>, ${top.occurrences}× in ${top.runs} runs${across}, with ${saving} spent only on picking the next step — ${fixed ? 'a fixed procedure the model rubber-stamps' : 'a shape the model steers'}.`;
 }
 
 const tok = n => n == null ? '—' : n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : String(Math.round(n));
