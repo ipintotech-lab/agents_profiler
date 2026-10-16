@@ -61,6 +61,8 @@ def _sequence_opportunities(sequences: list[dict]) -> list[dict]:
             "title": " → ".join(p["steps"]),
             "action": "Combine these steps into one scripted step",
             "evidence": f"{p['occurrences']}× in {p['runs']} runs · {p['llm_calls_between_steps']} LLM calls between steps",
+            "nodes": list(p["steps"]),
+            "observations": p["occurrences"],
             "saving": p["cost_between_steps"],
             "observed_cost": p["sequence_cost"],
         }
@@ -96,6 +98,8 @@ def _cache_opportunities(calls: list[dict], names: dict[str, set[str]]) -> list[
             "input": c["input"],
             "action": "Reuse the first result, or skip the repeat",
             "evidence": f"{c['count']}× with identical input, same output every time · {c['redundant_calls']} repeats",
+            "nodes": [c["node"]],
+            "observations": c["count"],
             "saving": c["cost_with_decision"] * c["redundant_calls"] / c["count"],
             "observed_cost": c["cost_with_decision"],
         }
@@ -121,6 +125,8 @@ def _fingerprint_opportunities(stats: list[ActionStats], llm_nodes: set[tuple[st
                     "title": s.node,
                     "action": "Find what changes the result: state or inputs the traces don't capture",
                     "evidence": fp["variance"]["explanation"],
+                    "nodes": [s.node],
+                    "observations": s.occurrences,
                     "saving": None,
                     "observed_cost": s.avg_cost * s.occurrences,
                 }
@@ -136,6 +142,8 @@ def _fingerprint_opportunities(stats: list[ActionStats], llm_nodes: set[tuple[st
                     "trigger": g["trigger"],
                     "action": f"Replace the LLM call with a rule that returns {g['dominant_output']}",
                     "evidence": f"same choice {g['observations']} of {g['observations']} times after {g['trigger']}",
+                    "nodes": [s.node],
+                    "observations": g["observations"],
                     "saving": g["avg_cost"] * (g["observations"] - 1),
                     "observed_cost": g["total_cost"],
                 }

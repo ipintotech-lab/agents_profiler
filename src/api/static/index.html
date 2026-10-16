@@ -51,6 +51,19 @@
   }
   button.ghost { background: transparent; border: 1px solid var(--line); color: var(--dim); }
   button:disabled { opacity: .5; cursor: not-allowed; }
+  .fo-bar { position: relative; height: 8px; background: var(--panel2); border: 1px solid var(--line); min-width: 90px; margin-top: 4px; }
+  .fo-bar > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--line); }
+  .fo-bar > b { position: absolute; left: 0; top: 0; bottom: 0; background: var(--amber); }
+  .risk { display: inline-block; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; padding: 1px 6px; border: 1px solid currentColor; }
+  .risk.low { color: var(--green); } .risk.medium { color: var(--amber); } .risk.high { color: var(--red); }
+  .fo-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0; }
+  .fo-col { background: var(--panel); border: 1px solid var(--line); padding: 10px; }
+  .fo-col h3 { font-family: var(--serif); font-weight: 400; font-size: 15px; color: var(--ink); margin: 0 0 2px; }
+  .fo-col .colsum { color: var(--dim); font-size: 11.5px; margin-bottom: 8px; }
+  .fo-card { background: var(--panel2); border: 1px solid var(--line); padding: 9px 10px; margin-bottom: 8px; font-size: 12px; color: var(--dim); }
+  .fo-card .t { color: var(--ink); font-size: 12.5px; margin: 3px 0; word-break: break-word; }
+  .fo-card .s { color: var(--amber); font-size: 13px; }
+  .fo-headline { font-family: var(--serif); font-size: 22px; color: var(--ink); margin: 6px 0 2px; max-width: 900px; }
   .hint { color: var(--faint); font-size: 11px; margin-top: 2px; }
   .tablenote { margin: 14px 0 6px; }
   tr.explain td { color: var(--dim); font-size: 12px; padding-top: 0; border-top: none; }
@@ -205,6 +218,7 @@
     <div class="modetab" id="tabGenerate" data-mode="generate">Generate sample data</div>
     <div class="modetab" id="tabSweep" data-mode="sweep">Run tests</div>
     <div class="modetab" id="tabPOC" data-mode="poc">POC: Stabilization</div>
+    <div class="modetab" id="tabFinops" data-mode="finops">AI Agent FinOps</div>
   </div>
 
   <form class="controls" id="form" style="border-top-left-radius:0">
@@ -486,6 +500,62 @@ hf auth login</pre>
       </div>
     </div>
 
+    <div id="finopsPanel" hidden>
+      <details class="hf-guide tab-guide" id="finopsGuide" open>
+        <summary>What this tab does, and what to expect</summary>
+        <p>A <b>FinOps view of agent spend</b>: across every agent in the data, how much went to LLM and tool calls, how much of it these traces show was <b>avoidable</b>, and which savings are <b>safe to try first</b>. It uses the same evidence as the other tabs (repeated calls, repeated step chains, LLM choices a rule could make, regions), across all agents at once.</p>
+        <ol>
+          <li><b>Pick the data</b>: click <b>Load demo data</b> (six mock agents, 5,000 trace lines), or choose JSON / JSON Lines files, or paste a Hugging Face dataset link.</li>
+          <li><b>Optional: runs per month</b>. Traces carry no dates, so there is no "this month". Give your monthly run volume and every $ figure is also shown as a monthly projection (observed cost per run &times; runs).</li>
+          <li>Click <b>Analyze spend</b>.</li>
+        </ol>
+        <p><b>How to read the numbers</b>: <i>avoidable</i> is the cost of observed calls a change would have removed, each action counted once, so it is a <b>minimum</b>, not a forecast. <i>Risk</i> is a rule of thumb from how much evidence there is and what kind of change it is; nothing has been replayed against past calls yet. Real traces without recorded cost show $0: the coverage card says so.</p>
+      </details>
+      <div class="row">
+        <div class="field">
+          <label>Demo</label>
+          <button type="button" class="ghost" id="finopsDemoBtn">Load demo data</button>
+        </div>
+        <div class="field grow">
+          <label for="finopsFile">Or trace file(s) (.json / .jsonl) <span class="hint">select several to analyze together</span></label>
+          <input type="file" id="finopsFile" accept=".json,.jsonl,application/json" multiple>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field grow">
+          <label for="finopsHfUrl">Or a Hugging Face dataset link <span class="hint">a link to one file, e.g. …/blob/main/swebench.jsonl</span></label>
+          <input type="text" id="finopsHfUrl" placeholder="https://huggingface.co/datasets/<org>/<name>/blob/main/<file>.jsonl">
+        </div>
+        <div class="field">
+          <label for="finopsHfLimit">Records <span class="hint">1–500</span></label>
+          <input type="number" id="finopsHfLimit" min="1" max="500" value="50">
+        </div>
+        <div class="field">
+          <label for="finopsHfToken">Token <span class="hint">gated datasets only</span></label>
+          <input type="password" id="finopsHfToken" autocomplete="off" placeholder="hf_…">
+        </div>
+      </div>
+      <div class="row" style="margin-bottom:0">
+        <div class="field">
+          <label for="finopsRunsPerMonth">Runs per month <span class="hint">optional, for a monthly projection</span></label>
+          <input type="number" id="finopsRunsPerMonth" min="1" step="1" placeholder="e.g. 100000">
+        </div>
+        <div class="field">
+          <label for="finopsOutputMatch">Compare outputs</label>
+          <select id="finopsOutputMatch">
+            <option value="exact">exact (decision and result)</option>
+            <option value="decision">decision only</option>
+            <option value="normalized">normalized text</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <button type="button" id="finopsBtn">Analyze spend</button>
+        </div>
+      </div>
+      <div class="gensummary" id="finopsSource"></div>
+    </div>
+
     <div class="row" style="margin-top:14px" id="formulaRow">
       <div class="field">
         <label for="unit_cost">unit_cost <span class="hint">leader's $/capacity unit</span></label>
@@ -683,6 +753,37 @@ hf auth login</pre>
     <pre class="code" id="sweepNote"></pre>
   </div>
 
+  <div id="finopsReport" style="display:none">
+    <h2><span class="idx">01</span>Overview <span style="font-size:12px;color:var(--faint)">— where the money goes and how much of it was avoidable</span></h2>
+    <p class="fo-headline" id="finopsHeadline"></p>
+    <p class="takeaway" id="finopsTakeaway"></p>
+    <div class="stats explained" id="finopsStats"></div>
+    <p class="lede" id="finopsNotes"></p>
+
+    <h2><span class="idx">02</span>Agents <span style="font-size:12px;color:var(--faint)">— spend and avoidable spend per agent workflow, most avoidable first</span></h2>
+    <p class="lede">One row per agent workflow. The bar is the workflow's spend; the amber part is what these traces show was avoidable (each action counted once). <i>Cost per run</i> is total spend over runs. Sort by clicking a header.</p>
+    <table id="finopsAgents"><thead><tr><th data-sort="workflow">agent workflow</th><th class="num" data-sort="runs">runs</th><th class="num" data-sort="spend">spend</th><th class="num" data-sort="cost_per_run">cost / run</th><th class="num" data-sort="avoidable">avoidable</th><th class="num" data-sort="avoidable_share">avoidable %</th><th class="num" data-sort="opportunities">findings</th></tr></thead><tbody></tbody></table>
+
+    <h2><span class="idx">03</span>Biggest waste <span style="font-size:12px;color:var(--faint)">— the largest avoidable costs, none overlapping</span></h2>
+    <p class="lede">The top savings that make up the headline: each removes calls no other row above it already removes. <i>Risk</i> is a rule of thumb: evidence size and kind of change.</p>
+    <table id="finopsWaste"><thead><tr><th>#</th><th>change</th><th>where</th><th class="num">avoidable</th><th>risk</th><th>evidence</th></tr></thead><tbody></tbody></table>
+
+    <h2><span class="idx">04</span>Costliest actions <span style="font-size:12px;color:var(--faint)">— per action: cost spread, consistency, when it is predictable, best saving</span></h2>
+    <p class="lede">The most expensive actions across all agents. <i>p50</i> is the typical call, <i>p95</i> the priciest 5%. <i>Consistency</i>: same input &rarr; same output, over inputs seen more than once. <i>Predictable when</i> lists the deciding input field or the regions (input values where a simple rule gives the answer). <i>Best saving</i> is the largest finding on that action.</p>
+    <table id="finopsActions"><thead><tr><th>action</th><th class="num">calls</th><th class="num">spend</th><th class="num">avg · p50 · p95</th><th class="num">consistency</th><th>predictable when</th><th>model</th><th>best saving</th></tr></thead><tbody></tbody></table>
+    <p class="hint" id="finopsActionsMore"></p>
+
+    <h2><span class="idx">05</span>Recommendations <span style="font-size:12px;color:var(--faint)">— every finding, by how safe it is to act on</span></h2>
+    <p class="lede"><b>Ready to try</b>: plenty of evidence and a low-risk change (reuse a read-only result, a choice that never varied). <b>Needs review</b>: thin evidence, or the change replaces an LLM decision or a step that writes something. <b>Investigate first</b>: the action gives different results for the same input, so fix that before automating it. <b>Replay-verified</b> stays empty until replay against past calls is built. A $ shown in grey overlaps a larger finding and isn't in the headline.</p>
+    <div class="fo-board" id="finopsBoard"></div>
+
+    <h2><span class="idx">06</span>Model mix <span style="font-size:12px;color:var(--faint)">— LLM spend per model</span></h2>
+    <table id="finopsModels"><thead><tr><th>model</th><th class="num">calls</th><th class="num">spend</th><th class="num">avg / call</th><th>used by</th></tr></thead><tbody></tbody></table>
+
+    <h2><span class="idx">07</span>Method &amp; limits</h2>
+    <ul class="lede" id="finopsLimits"></ul>
+  </div>
+
   <div id="pocReport" style="display:none">
     <h2><span class="idx">01</span>Summary <span style="font-size:12px;color:var(--faint)">— how much data the profiler needs before its answers stop changing</span></h2>
     <p class="lede">This answers one question: <strong>how much synthetic trace data does the profiler actually need before its determinism calls stop changing?</strong> It is not looking for the sample size with the highest accuracy — it is looking for the <em>smallest</em> sample size beyond which feeding it more data stops meaningfully improving the result. Below that point, trust the numbers less; above it, more data is just cost with no added benefit.</p>
@@ -797,6 +898,10 @@ const submitRow = document.getElementById('submitRow');
 const behaviorRow = document.getElementById('behaviorRow');
 const sweepReportEl = document.getElementById('sweepReport');
 const pocReportEl = document.getElementById('pocReport');
+const tabFinops = document.getElementById('tabFinops');
+const finopsPanel = document.getElementById('finopsPanel');
+const finopsReportEl = document.getElementById('finopsReport');
+let lastFinops = null;
 let lastSweepResult = null;
 let lastPocResult = null;
 
@@ -813,20 +918,25 @@ function setMode(m) {
   tabHF.classList.toggle('active', m === 'hf');
   tabSweep.classList.toggle('active', m === 'sweep');
   tabPOC.classList.toggle('active', m === 'poc');
+  tabFinops.classList.toggle('active', m === 'finops');
   uploadPanel.hidden = m !== 'upload';
   document.getElementById('uploadGuideWrap').hidden = m !== 'upload';
   generatePanel.hidden = m !== 'generate';
   hfPanel.hidden = m !== 'hf';
   sweepPanel.hidden = m !== 'sweep';
   pocPanel.hidden = m !== 'poc';
+  finopsPanel.hidden = m !== 'finops';
   if (m === 'poc') loadPocExpected();
-  formulaRow.hidden = m === 'sweep' || m === 'poc';
-  behaviorRow.hidden = m === 'sweep' || m === 'poc';
-  submitRow.hidden = m === 'sweep' || m === 'poc';
-  pipelineEl.style.display = (m === 'sweep' || m === 'poc') ? 'none' : '';
-  reportEl.style.display = (m === 'sweep' || m === 'poc') ? 'none' : (reportEl.dataset.hasRun ? 'block' : 'none');
+  // these tabs run on their own button and show their own report
+  const ownReport = m === 'sweep' || m === 'poc' || m === 'finops';
+  formulaRow.hidden = ownReport;
+  behaviorRow.hidden = ownReport;
+  submitRow.hidden = ownReport;
+  pipelineEl.style.display = ownReport ? 'none' : '';
+  reportEl.style.display = ownReport ? 'none' : (reportEl.dataset.hasRun ? 'block' : 'none');
   sweepReportEl.style.display = m === 'sweep' && lastSweepResult ? 'block' : 'none';
   pocReportEl.style.display = m === 'poc' && lastPocResult ? 'block' : 'none';
+  finopsReportEl.style.display = m === 'finops' && lastFinops ? 'block' : 'none';
   updateRunBtnState();
 }
 tabUpload.addEventListener('click', () => setMode('upload'));
@@ -839,7 +949,7 @@ document.getElementById('hfUrl').addEventListener('input', () => {
 });
 
 // each tab's guide stays open until the viewer closes it once
-['hfGuide', 'uploadGuide', 'generateGuide', 'sweepGuide', 'pocGuide'].forEach(id => {
+['hfGuide', 'uploadGuide', 'generateGuide', 'sweepGuide', 'pocGuide', 'finopsGuide'].forEach(id => {
   const guide = document.getElementById(id);
   try { if (localStorage.getItem(id + 'Closed') === '1') guide.open = false; } catch (e) { /* no storage */ }
   guide.addEventListener('toggle', () => {
@@ -894,6 +1004,7 @@ hfListBtn.addEventListener('click', async () => {
 });
 tabSweep.addEventListener('click', () => setMode('sweep'));
 tabPOC.addEventListener('click', () => setMode('poc'));
+tabFinops.addEventListener('click', () => setMode('finops'));
 
 function updateAgentFields() {
   const n = parseInt(agentCountEl.value, 10);
@@ -1651,6 +1762,210 @@ function renderBehavior(b, prefix) {
       <td class="hint">${f.slices.map(sl => `${esc(sl.value)} → ${esc(sl.dominant_output)} (${Math.round(sl.dominant_rate * 100)}% of ${sl.observations})`).join('; ')}</td>
     </tr>`)).join('') || '<tr><td colspan="5" class="hint">No input field with few enough values (2–12) and enough calls per value to rank.</td></tr>';
 }
+
+
+// --- AI Agent FinOps tab ---
+const FINOPS_DEMO = { agent_count: 6, actions_per_agent: [5, 5, 5, 5, 5, 5], total_lines: 5000, seed: 0 };
+let finopsDemoBlob = null;
+let finopsAgentSort = { key: 'avoidable', dir: -1 };
+const usd = v => v == null ? '—' : v === 0 ? '$0' : v >= 1000 ? `$${Math.round(v).toLocaleString()}` : money(v);
+const pctOf = (a, b) => b ? `${Math.round(100 * a / b)}%` : '—';
+
+document.getElementById('finopsDemoBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('finopsDemoBtn');
+  errEl.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+  try {
+    const res = await fetch('/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(FINOPS_DEMO) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Generation failed.');
+    finopsDemoBlob = new Blob([data.jsonl], { type: 'application/x-ndjson' });
+    document.getElementById('finopsFile').value = '';
+    document.getElementById('finopsHfUrl').value = '';
+    await runFinops();
+  } catch (e) {
+    showErr(e.message || String(e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Load demo data';
+  }
+});
+// picking a file or a link replaces the demo data
+document.getElementById('finopsFile').addEventListener('change', () => { finopsDemoBlob = null; });
+document.getElementById('finopsHfUrl').addEventListener('input', () => { finopsDemoBlob = null; });
+document.getElementById('finopsBtn').addEventListener('click', () => runFinops());
+
+async function runFinops() {
+  errEl.style.display = 'none';
+  const fd = new FormData();
+  const files = [...document.getElementById('finopsFile').files];
+  const hfUrl = document.getElementById('finopsHfUrl').value.trim();
+  let source;
+  if (finopsDemoBlob) {
+    fd.append('file', finopsDemoBlob, 'demo-6-agents-5000-lines.jsonl');
+    source = 'Demo data: six mock agents, 5,000 trace lines (seed 0).';
+  } else if (files.length) {
+    files.forEach(f => fd.append('file', f));
+    source = `${files.length} file${files.length === 1 ? '' : 's'}: ${files.map(f => esc(f.name)).join(', ')}.`;
+  } else if (hfUrl) {
+    fd.append('hf_url', hfUrl);
+    fd.append('hf_limit', document.getElementById('finopsHfLimit').value || '50');
+    const token = document.getElementById('finopsHfToken').value.trim();
+    if (token) fd.append('hf_token', token);
+    source = `Hugging Face: ${esc(hfUrl)}.`;
+  } else {
+    showErr('Load the demo data, choose a trace file, or paste a Hugging Face link first.');
+    return;
+  }
+  const rpm = document.getElementById('finopsRunsPerMonth').value;
+  if (rpm) fd.append('runs_per_month', rpm);
+  fd.append('output_match', document.getElementById('finopsOutputMatch').value);
+  const btn = document.getElementById('finopsBtn');
+  btn.disabled = true;
+  btn.textContent = 'Analyzing…';
+  try {
+    const res = await fetch('/finops', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Analysis failed.');
+    lastFinops = data;
+    document.getElementById('finopsSource').innerHTML = `<span class="ok">Analyzed</span> ${source}`;
+    renderFinops(data);
+    finopsReportEl.style.display = 'block';
+    finopsReportEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) {
+    showErr(e.message || String(e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Analyze spend';
+  }
+}
+
+function riskPill(r) { return `<span class="risk ${r}">${r}</span>`; }
+function findingWhere(o) {
+  const at = o.where ? ` when ${esc(o.where)}` : o.input && Object.keys(o.input).length
+    ? ` for ${esc(Object.entries(o.input).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ').slice(0, 80))}` : '';
+  return `<code>${esc(o.title)}</code>${at}<div class="hint">${esc(o.workflow)}</div>`;
+}
+
+function renderFinops(f) {
+  const o = f.overview, p = f.projection, c = f.coverage;
+  const monthly = v => p && v != null ? ` <span class="hint">≈ ${usd(v * p.factor)}/mo</span>` : '';
+  document.getElementById('finopsHeadline').innerHTML = o.spend
+    ? `At least <b class="warn">${usd(o.avoidable)}</b> of <b>${usd(o.spend)}</b> agent spend (${pctOf(o.avoidable, o.spend)}) went to calls these traces show were avoidable${p ? `: about <b class="warn">${usd(p.avoidable)}</b> a month at ${Number(p.runs_per_month).toLocaleString()} runs.` : '.'}`
+    : 'No cost is recorded in these traces, so spend and savings show as $0. The findings below still say what repeats.';
+  const top = f.top_waste[0];
+  document.getElementById('finopsTakeaway').textContent = top
+    ? `Biggest single saving: ${OPPORTUNITY_LABELS[top.type] || top.type} on ${top.title}${top.where ? ` when ${top.where}` : ''} (${top.workflow}), ${usd(top.saving)} observed, risk ${top.risk}. ${usd(o.ready_saving)} of the avoidable spend is ready to try now.`
+    : 'No avoidable spend found: nothing repeated often enough to act on. Larger traces usually show more.';
+  document.getElementById('finopsStats').innerHTML =
+    statCardExplained(usd(o.spend), 'agent spend', `observed in ${o.calls.toLocaleString()} calls over ${o.runs} runs of ${o.workflows} workflow${o.workflows === 1 ? '' : 's'}; ${usd(f.overview.llm_spend)} of it on LLM calls.${monthly(o.spend)}`) +
+    statCardExplained(`${usd(o.avoidable)} <span style="font-size:14px">(${pctOf(o.avoidable, o.spend)})</span>`, 'avoidable, at least', `the cost of observed calls ${o.counted_opportunities} non-overlapping findings would have removed. A minimum: overlapping and unproven savings are left out.${monthly(o.avoidable)}`) +
+    statCardExplained(usd(o.ready_saving), 'ready to try', `the part of the avoidable spend whose findings have plenty of evidence and a low-risk change.${monthly(o.ready_saving)}`) +
+    statCardExplained(o.opportunities, 'findings', `${f.status_totals.ready.count} ready, ${f.status_totals.review.count} need review, ${f.status_totals.investigate.count} to investigate first (section 05).`) +
+    statCardExplained(`${pctOf(c.llm_calls_with_cost, c.llm_calls)} · ${pctOf(c.calls_with_repeated_input, c.calls)}`, 'data coverage', `LLM calls with a recorded cost · calls whose input was seen more than once. Savings can only be measured on calls with cost, and most findings need repeated inputs.`) +
+    (p ? statCardExplained(usd(p.spend), 'monthly projection', `spend at ${Number(p.runs_per_month).toLocaleString()} runs a month, from the observed cost per run (${p.factor.toFixed(1)}× this data). Assumes the same mix of agents.`) : '');
+  document.getElementById('finopsNotes').textContent = f.notes;
+
+  renderFinopsAgents(f);
+
+  document.getElementById('finopsWaste').tBodies[0].innerHTML = f.top_waste.map((w, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${esc(OPPORTUNITY_LABELS[w.type] || w.type)}<div class="hint">${esc(w.action)}</div></td>
+      <td>${findingWhere(w)}</td>
+      <td class="num">${usd(w.saving)}${monthly(w.saving)}</td>
+      <td>${riskPill(w.risk)}<div class="hint">${w.risk_reasons.map(esc).join('; ')}</div></td>
+      <td class="hint">${esc(w.evidence)} · evidence ${w.evidence_strength}</td>
+    </tr>`).join('') || '<tr><td colspan="6" class="hint">Nothing avoidable found.</td></tr>';
+
+  const totalSpend = o.spend || 1;
+  document.getElementById('finopsActions').tBodies[0].innerHTML = f.actions.map(a => {
+    const cons = a.consistency.rate != null ? `${Math.round(a.consistency.rate * 100)}% <span class="hint">${a.consistency.repeated_inputs} repeated</span>` : '<span class="hint">no repeats</span>';
+    const when = a.regions.length
+      ? a.regions.map(r => `<code>${esc(r.where)}</code> <span class="hint">${esc(r.rule_text)} (${Math.round(r.rule_rate * 100)}% vs ${Math.round(r.rest_rate * 100)}%)</span>`).join('<br>')
+      : a.deciding_field ? `decided by <code>${esc(a.deciding_field)}</code>` : a.hidden_state ? '<span class="bad">varies for the same input</span>' : '—';
+    const best = a.best ? `${esc(OPPORTUNITY_LABELS[a.best.type] || a.best.type)} <span class="s">${usd(a.best.saving)}</span> ${riskPill(a.best.risk)}` : '—';
+    return `
+    <tr>
+      <td><code>${esc(a.node)}</code>${a.is_llm ? ' <span class="hint">LLM</span>' : ''}<div class="hint">${esc(a.workflow)}</div></td>
+      <td class="num">${a.observations}</td>
+      <td class="num">${usd(a.cost.total)}<div class="hint">${pctOf(a.cost.total, totalSpend)} of spend</div></td>
+      <td class="num">${a.cost.total ? `${money(a.cost.avg)} · ${money(a.cost.p50)} · ${money(a.cost.p95)}` : '—'}</td>
+      <td class="num">${cons}</td>
+      <td>${when}</td>
+      <td>${a.models.map(m => esc(m.name)).join(', ') || '—'}</td>
+      <td>${best}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('finopsActionsMore').textContent = f.num_actions > f.actions.length
+    ? `Showing the ${f.actions.length} costliest of ${f.num_actions} actions.` : '';
+
+  const cols = [...Object.entries(f.status_labels), ['verified', 'Replay-verified']];
+  document.getElementById('finopsBoard').innerHTML = cols.map(([key, label]) => {
+    const items = f.opportunities.filter(x => x.status === key);
+    const shown = items.slice(0, 8);
+    const sum = key === 'verified'
+      ? 'Replay against past calls is not built yet: nothing is verified.'
+      : `${items.length} finding${items.length === 1 ? '' : 's'}${f.status_totals[key] ? ` · ${usd(f.status_totals[key].saving)} counted` : ''}`;
+    return `<div class="fo-col"><h3>${esc(label)}</h3><div class="colsum">${sum}</div>${shown.map(x => `
+      <div class="fo-card">
+        ${riskPill(x.risk)} <span>${esc(OPPORTUNITY_LABELS[x.type] || x.type)}</span>
+        <div class="t">${findingWhere(x)}</div>
+        <div>${esc(x.action)}</div>
+        <div style="margin-top:4px">${x.saving ? `<span class="${x.counted ? 's' : 'hint'}">${usd(x.saving)}</span>${x.counted ? '' : ' <span class="hint">overlaps a larger finding</span>'}` : '<span class="hint">no direct saving</span>'} · evidence ${x.evidence_strength} (${x.observations})</div>
+        <div class="hint">${x.risk_reasons.map(esc).join('; ')} · ${esc(x.validation)}</div>
+      </div>`).join('')}${items.length > shown.length ? `<div class="hint">+ ${items.length - shown.length} more</div>` : ''}</div>`;
+  }).join('');
+
+  document.getElementById('finopsModels').tBodies[0].innerHTML = f.models.map(m => `
+    <tr>
+      <td><code>${esc(m.model)}</code></td>
+      <td class="num">${m.calls.toLocaleString()}</td>
+      <td class="num">${usd(m.spend)}<div class="hint">${pctOf(m.spend, totalSpend)} of spend</div></td>
+      <td class="num">${money(m.avg_cost)}</td>
+      <td class="hint">${m.workflows.map(esc).join(', ')}</td>
+    </tr>`).join('') || '<tr><td colspan="5" class="hint">No LLM calls (no model recorded).</td></tr>';
+
+  document.getElementById('finopsLimits').innerHTML = [
+    '<b>Avoidable is a minimum.</b> It sums the observed cost of calls each finding would have removed, taking the largest first and skipping any finding that touches an action already counted (a cached call inside a scripted sequence counts once).',
+    '<b>Risk is a heuristic, not a test.</b> Low: 10+ identical read-only calls, or an LLM choice that never varied over 20+ calls. Medium: less evidence, a replaced LLM decision, or a script that repeats writes. High: the action gives different results for the same input.',
+    '<b>Not built yet: replay.</b> Running a proposed rule or cache over past calls to measure how often it matches is the next step; until then no saving is verified.',
+    '<b>No dates in traces.</b> Monthly figures are a projection from runs per month, and assume the observed mix of agents.',
+    `<b>Outputs compared as</b> ${esc(f.output_match)}: set with "Compare outputs".`,
+  ].map(x => `<li>${x}</li>`).join('');
+}
+
+function renderFinopsAgents(f) {
+  const { key, dir } = finopsAgentSort;
+  const rows = [...f.workflows].sort((a, b) => {
+    const x = a[key] ?? -1, y = b[key] ?? -1;
+    return (typeof x === 'string' ? x.localeCompare(y) : x - y) * dir;
+  });
+  const max = Math.max(...f.workflows.map(w => w.spend), 1e-9);
+  const proj = f.projection;
+  document.getElementById('finopsAgents').tBodies[0].innerHTML = rows.map(w => `
+    <tr>
+      <td><code>${esc(w.workflow)}</code>${w.agents.length && (w.agents.length > 1 || w.agents[0] !== w.workflow) ? `<div class="hint">${w.agents.map(esc).join(', ')}</div>` : ''}
+        <div class="fo-bar" title="spend ${usd(w.spend)}, avoidable ${usd(w.avoidable)}"><i style="width:${100 * w.spend / max}%"></i><b style="width:${100 * w.avoidable / max}%"></b></div></td>
+      <td class="num">${w.runs}</td>
+      <td class="num">${usd(w.spend)}${proj ? `<div class="hint">≈ ${usd(w.spend * proj.factor)}/mo</div>` : ''}</td>
+      <td class="num">${money(w.cost_per_run)}</td>
+      <td class="num warn">${usd(w.avoidable)}${proj ? `<div class="hint">≈ ${usd(w.avoidable * proj.factor)}/mo</div>` : ''}</td>
+      <td class="num">${w.avoidable_share != null ? Math.round(w.avoidable_share * 100) + '%' : '—'}</td>
+      <td class="num">${w.opportunities}${w.regions ? `<div class="hint">${w.regions} region${w.regions === 1 ? '' : 's'}</div>` : ''}</td>
+    </tr>`).join('');
+  [...document.getElementById('finopsAgents').tHead.rows[0].cells].forEach(th => {
+    th.style.cursor = 'pointer';
+    th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (th.dataset.sort === key ? (dir > 0 ? ' ▲' : ' ▼') : '');
+  });
+}
+document.getElementById('finopsAgents').tHead.addEventListener('click', e => {
+  const th = e.target.closest('th');
+  if (!th || !th.dataset.sort || !lastFinops) return;
+  finopsAgentSort = { key: th.dataset.sort, dir: finopsAgentSort.key === th.dataset.sort ? -finopsAgentSort.dir : (th.dataset.sort === 'workflow' ? 1 : -1) };
+  renderFinopsAgents(lastFinops);
+});
 
 async function loadHistorySummary() {
   const el = document.getElementById('historySummary');

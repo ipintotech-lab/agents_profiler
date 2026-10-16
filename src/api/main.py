@@ -36,6 +36,7 @@ from ingest.huggingface import fetch_records, list_data_files, parse_hf_url
 from ingest.trace_schema import TraceEvent
 from profiler import history, run_pipeline, run_poc, run_sweep
 from profiler.behavior import OUTPUT_MATCHES, build_behavior
+from profiler.finops import build_finops
 from rawdata_gen import (
     generate_configured,
     verify_seed_range_reproducibility,
@@ -174,6 +175,43 @@ async def huggingface_files(url: str = Form(...), token: str | None = Form(None)
     return {"repo_id": ref.repo_id, "revision": ref.revision, "files": files}
 
 
+async def _load_events(
+    file: list[UploadFile] | None, hf_url: str | None, hf_file: str | None, hf_limit: int, hf_token: str | None
+) -> tuple[list[TraceEvent], list[dict]]:
+    """Events from uploaded files and / or a Hugging Face dataset file, and
+    a summary per source."""
+    events: list[TraceEvent] = []
+    file_summaries: list[dict] = []
+    seen_digests: dict[str, str] = {}
+    if not file and not hf_url:
+        raise HTTPException(status_code=400, detail="upload a trace file or give a Hugging Face dataset link")
+    for upload in file or []:
+        raw = await upload.read()
+        name = upload.filename or f"file {len(file_summaries) + 1}"
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest in seen_digests:
+            raise HTTPException(status_code=400, detail=f"{name} has the same content as {seen_digests[digest]}")
+        seen_digests[digest] = name
+        file_events = _parse_trace_events(raw, name)
+        events.extend(file_events)
+        file_summaries.append({"name": name, "num_events": len(file_events)})
+    if hf_url:
+        if not 1 <= hf_limit <= HF_MAX_LIMIT:
+            raise HTTPException(status_code=400, detail=f"hf_limit must be between 1 and {HF_MAX_LIMIT}")
+        try:
+            records, path = await run_in_threadpool(fetch_records, hf_url, hf_file or None, hf_limit, hf_token or None)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise _hf_error(exc) from exc
+        name = f"{parse_hf_url(hf_url).repo_id}/{path}"
+        try:
+            hf_events = [TraceEvent.model_validate(row) for row in normalize_raw_json(records)]
+        except (ValidationError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=f"could not parse {name}: {exc}") from exc
+        events.extend(hf_events)
+        file_summaries.append({"name": name, "num_events": len(hf_events), "num_records": len(records)})
+    return events, file_summaries
+
+
 @app.post("/analyze")
 async def analyze(
     file: list[UploadFile] | None = File(None),  # noqa: B008
@@ -230,35 +268,7 @@ async def analyze(
         if price_input_per_mtok < 0 or price_output_per_mtok < 0:
             raise HTTPException(status_code=400, detail="token prices can't be negative")
         token_prices = (price_input_per_mtok, price_output_per_mtok)
-    events: list[TraceEvent] = []
-    file_summaries: list[dict] = []
-    seen_digests: dict[str, str] = {}
-    if not file and not hf_url:
-        raise HTTPException(status_code=400, detail="upload a trace file or give a Hugging Face dataset link")
-    for upload in file or []:
-        raw = await upload.read()
-        name = upload.filename or f"file {len(file_summaries) + 1}"
-        digest = hashlib.sha256(raw).hexdigest()
-        if digest in seen_digests:
-            raise HTTPException(status_code=400, detail=f"{name} has the same content as {seen_digests[digest]}")
-        seen_digests[digest] = name
-        file_events = _parse_trace_events(raw, name)
-        events.extend(file_events)
-        file_summaries.append({"name": name, "num_events": len(file_events)})
-    if hf_url:
-        if not 1 <= hf_limit <= HF_MAX_LIMIT:
-            raise HTTPException(status_code=400, detail=f"hf_limit must be between 1 and {HF_MAX_LIMIT}")
-        try:
-            records, path = await run_in_threadpool(fetch_records, hf_url, hf_file or None, hf_limit, hf_token or None)
-        except (ValueError, RuntimeError, OSError) as exc:
-            raise _hf_error(exc) from exc
-        name = f"{parse_hf_url(hf_url).repo_id}/{path}"
-        try:
-            hf_events = [TraceEvent.model_validate(row) for row in normalize_raw_json(records)]
-        except (ValidationError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail=f"could not parse {name}: {exc}") from exc
-        events.extend(hf_events)
-        file_summaries.append({"name": name, "num_events": len(hf_events), "num_records": len(records)})
+    events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
     parsed_ground_truth = None
     if ground_truth:
         try:
@@ -323,6 +333,33 @@ async def behavior_history() -> dict:
 async def behavior_history_clear(workflow: str | None = None, older_than_days: float | None = None) -> dict:
     deleted = await run_in_threadpool(history.clear, workflow, older_than_days)
     return {"deleted": deleted, **history.summary()}
+
+
+@app.post("/finops")
+async def finops(
+    file: list[UploadFile] | None = File(None),  # noqa: B008
+    hf_url: str | None = Form(None),
+    hf_file: str | None = Form(None),
+    hf_limit: int = Form(10),
+    hf_token: str | None = Form(None),
+    output_match: str = Form("exact"),
+    runs_per_month: float | None = Form(None),
+) -> dict:
+    """AI Agent FinOps view of the uploaded traces (same inputs as
+    ``/analyze``): spend across every workflow, avoidable spend as a lower
+    bound, and opportunities with a heuristic risk. ``runs_per_month``
+    projects the $ figures from the observed cost per run."""
+    if output_match not in OUTPUT_MATCHES:
+        raise HTTPException(status_code=400, detail=f"output_match must be one of {', '.join(OUTPUT_MATCHES)}")
+    if runs_per_month is not None and runs_per_month <= 0:
+        raise HTTPException(status_code=400, detail="runs_per_month must be positive")
+    events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
+    try:
+        result = await run_in_threadpool(build_finops, events, output_match, runs_per_month)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result["files"] = file_summaries
+    return result
 
 
 @app.post("/generate")

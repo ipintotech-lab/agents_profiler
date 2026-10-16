@@ -262,6 +262,33 @@ POC tab shows it in its guide before you run anything. Results follow the
 report's numbered layout: 01 Summary, 02 Expected vs. found, 03 Calibration,
 04 Sample size, 05 Stability, 06 Capacity, 07 Savings.
 
+### AI Agent FinOps
+
+The FinOps tab (`POST /finops`, in `src/profiler/finops.py`) shows spend
+across all the agents in the data at once. It takes the same inputs as
+`/analyze`: JSON or JSON Lines files, or a Hugging Face link
+(`hf_url`, `hf_limit`, `hf_token`). Its optional fields are `output_match` and
+`runs_per_month`. **Load demo data** generates the six mock agents
+(5,000 lines, seed 0) and analyzes them.
+
+- **Avoidable spend is a minimum.** The findings are the same ones the report
+  makes (scripted sequences, caches, rule bypasses, hidden state, regions).
+  The headline sums the observed cost of the calls each finding would remove.
+  It takes the largest first and skips any finding that touches an action
+  already counted, so a cached call inside a scripted sequence counts once.
+- **Risk is a rule of thumb.** It comes from evidence size and the kind of
+  change. Low risk with strong evidence goes to "Ready to try". A cache or
+  rule on an action that gives different results for the same input goes to
+  "Investigate first". On 10 seeds at 2,000 and 5,000 lines, no planted trap
+  was ever marked ready.
+- **Not built yet: replay.** Nothing is verified against past calls, and the
+  "Replay-verified" column stays empty.
+- **Traces carry no dates.** Monthly figures scale the observed cost per run
+  by `runs_per_month`.
+
+The demo data gives about 25% avoidable spend (20–29% across seeds). Real
+traces that don't record cost show $0, and the coverage card says so.
+
 ### Run tests
 
 The "Run tests" tab (`POST /run_sweep`) is a health check of the pipeline:

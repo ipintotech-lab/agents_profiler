@@ -46,7 +46,7 @@ class _Step:
     glue_calls: int = 0
 
 
-def _is_router_call(event: TraceEvent) -> bool:
+def is_router_call(event: TraceEvent) -> bool:
     return event.decision is not None and event.decision.type == _ROUTER_DECISION_TYPE
 
 
@@ -60,7 +60,7 @@ def _steps_by_run(events: list[TraceEvent]) -> dict[str, list[_Step]]:
     runs: dict[str, list[_Step]] = defaultdict(list)
     pending: dict[str, _Step] = {}
     for e in events:
-        if _is_router_call(e):
+        if is_router_call(e):
             if _chose_no_step(e):
                 pending.pop(e.run_id, None)
                 continue
@@ -91,7 +91,7 @@ def decision_costs(events: list[TraceEvent]) -> dict[int, float]:
             shares[id(step)] = cost / len(steps)
 
     for e in events:
-        if _is_router_call(e):
+        if is_router_call(e):
             settle(e.run_id)
             if not _chose_no_step(e):
                 batches[e.run_id] = (e.cost, [])
@@ -194,7 +194,7 @@ def repeated_calls(events: list[TraceEvent]) -> list[dict]:
     shares = decision_costs(events)
     groups: dict[tuple[str, str], list[TraceEvent]] = defaultdict(list)
     for e in events:
-        if _is_router_call(e):
+        if is_router_call(e):
             continue
         groups[(e.node, json.dumps(e.input_state, sort_keys=True, default=str))].append(e)
 
