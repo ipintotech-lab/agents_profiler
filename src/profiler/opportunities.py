@@ -62,6 +62,15 @@ def _pattern_id(o_type: str, *identity) -> str:
     often: the same habit next month gets the same ID."""
     return hashlib.sha1("|".join((o_type, *(str(i) for i in identity))).encode()).hexdigest()[:12]
 
+
+# A sequence's stable identity is its first two steps. The same habit can
+# extend further in one corpus window than another (January's traffic grew
+# the chain to three steps, February's stopped at two), and the
+# verification loop must read that as one pattern that grew or shrank --
+# not as one pattern vanishing and another appearing. The full extension
+# is hashed separately as variant_id, which explains what changed.
+SEQUENCE_ID_PREFIX_STEPS = 2
+
 # Plain-language meaning of each optimization type, shown next to the name.
 OPTIMIZATION_TYPES = {
     "EXTRACT_DETERMINISTIC_SUBSTEP": "The same steps run in the same order again and again -- the next step follows virtually every time, so the LLM calls between them only rubber-stamp it. Turning them into one script removes those calls.",
@@ -100,10 +109,14 @@ def _sequence_opportunities(sequences: list[dict]) -> list[dict]:
                 " → ".join(p["signature"]) if p.get("signature") else " → ".join(p["steps"])
             ),
             "nodes": list(p["steps"]),
-            # stable across analyses: the same habit in next month's traffic
-            # gets the same ID (keys on the step nodes, not the example's
-            # arguments, which vary by task)
-            "pattern_id": _pattern_id("SEQUENCE", *p["steps"]),
+            # stable across analyses AND across corpus windows: the same
+            # habit in next month's traffic keeps its ID even when the
+            # chain extends or shrinks (keys on the leading steps, not the
+            # example's arguments or the window's extension)
+            "pattern_id": _pattern_id("SEQUENCE", *p["steps"][:SEQUENCE_ID_PREFIX_STEPS]),
+            # the full extension: same pattern_id with a different
+            # variant_id means the habit grew or shrank, not changed
+            "variant_id": _pattern_id("SEQUENCE_VARIANT", *p["steps"]),
             "observations": p["occurrences"],
             "saving": p["cost_between_steps"],
             "saving_tokens": p["tokens_between_steps"],

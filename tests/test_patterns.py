@@ -300,17 +300,82 @@ def test_pattern_ids_are_stable_across_analyses_and_key_on_identity():
     seq_a = next(o for o in a if o["type"] == "EXTRACT_DETERMINISTIC_SUBSTEP")
     seq_b = next(o for o in b if o["type"] == "EXTRACT_DETERMINISTIC_SUBSTEP")
     assert seq_a["pattern_id"] == seq_b["pattern_id"], "same habit, different month: ids must match"
-    ids = [o["pattern_id"] for o in a]
-    assert len(ids) == len(set(ids)), "ids must be unique within a report"
+    ids = [(o["pattern_id"], o.get("variant_id")) for o in a]
+    assert len(ids) == len(set(ids)), "id/variant pairs must be unique within a report"
 
     # cross-session evidence: the habit spans both sessions
     assert "2 sessions" in seq_a["evidence"]
 
-    # a different habit (different steps) gets a different id
+    # a changed continuation (third step replaced) is the same habit root
+    # with a different variant -- not a new pattern
     other = [e for e in feb]
     for e in other:
         if e.node == "git push":
             e.node = "git ship"
     c = find_opportunities(other, "wf", find_repetition(other, "wf"), mine(other, "wf"))
     seq_c = next(o for o in c if o["type"] == "EXTRACT_DETERMINISTIC_SUBSTEP")
-    assert seq_c["pattern_id"] != seq_a["pattern_id"]
+    assert seq_c["pattern_id"] == seq_a["pattern_id"], "same leading steps: same habit root"
+    assert seq_c["variant_id"] != seq_a["variant_id"], "continuation changed: variant changes"
+
+    # a genuinely different habit (different leading steps) gets a different id
+    other2 = [e for e in feb]
+    for e in other2:
+        if e.node == "git add":
+            e.node = "git stage"
+    d = find_opportunities(other2, "wf", find_repetition(other2, "wf"), mine(other2, "wf"))
+    seq_d = next(o for o in d if o["type"] == "EXTRACT_DETERMINISTIC_SUBSTEP")
+    assert seq_d["pattern_id"] != seq_a["pattern_id"]
+
+
+def test_pattern_id_is_invariant_to_corpus_window_extension():
+    """Reported from the field: the same grep->sed habit had a 3-step chain
+    in one corpus window and a 2-step chain in another, and got different
+    pattern_ids -- which would make the verification loop read 'pattern
+    shrank' as 'pattern vanished, another appeared'. The stable ID keys on
+    the leading steps; the full extension is a variant."""
+    from profiler.mine import mine
+    from profiler.opportunities import find_opportunities
+
+    def corpus(steps):
+        events = []
+        for i, run in enumerate(("r1", "r2", "r3", "r4")):
+            events.append(
+                TraceEvent(
+                    trace_id="t", run_id=run, workflow="wf", agent="a", event_type="decision",
+                    node="llm_call", model="m", decision={"type": "next_action", "selected": "x"},
+                    tokens={"input": 100, "output": 10}, user_input=f"do {run}",
+                )
+            )
+            for step in steps:
+                events.append(
+                    TraceEvent(
+                        trace_id="t", run_id=run, workflow="wf", agent="a",
+                        event_type="decision", node="llm_call", model="m",
+                        decision={"type": "next_action", "selected": step},
+                        tokens={"input": 100, "output": 10},
+                    )
+                )
+                events.append(
+                    TraceEvent(
+                        trace_id="t", run_id=run, workflow="wf", agent="a",
+                        event_type="tool_call", node=step, input_state={"cmd": f"{step} {i}"},
+                    )
+                )
+        return events
+
+    # January: the chain grows to three steps; February (after the customer
+    # fixed the third step): the same habit stops at two
+    jan = find_opportunities(corpus(("grep", "sed", "edit")), "wf",
+                             find_repetition(corpus(("grep", "sed", "edit")), "wf"),
+                             mine(corpus(("grep", "sed", "edit")), "wf"))
+    feb = find_opportunities(corpus(("grep", "sed")), "wf",
+                             find_repetition(corpus(("grep", "sed")), "wf"),
+                             mine(corpus(("grep", "sed")), "wf"))
+    seq_jan = next(o for o in jan if o["type"] in ("EXTRACT_DETERMINISTIC_SUBSTEP", "REPEATED_AGENT_PATTERN"))
+    seq_feb = next(o for o in feb if o["type"] in ("EXTRACT_DETERMINISTIC_SUBSTEP", "REPEATED_AGENT_PATTERN"))
+    assert seq_jan["pattern_id"] == seq_feb["pattern_id"], \
+        "same habit, different window extension: id must not change"
+    assert seq_jan["variant_id"] != seq_feb["variant_id"], \
+        "the extension differs, so the variant must"
+    assert seq_jan["nodes"] == ["grep", "sed", "edit"]
+    assert seq_feb["nodes"] == ["grep", "sed"]
