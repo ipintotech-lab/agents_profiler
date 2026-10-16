@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from ingest.loader import load_traces
 from ingest.trace_schema import TraceEvent
 from profiler import run_pipeline
@@ -153,7 +155,11 @@ def test_run_pipeline_end_to_end_on_sample_traces():
     assert by_agent["security-agent"]["deterministic"] == 0
     assert by_agent["security-agent"]["non_deterministic"] == 0
 
-    assert len(report["recommend"]) == 6
+    # Every node in this fixture is an LLM call with INSUFFICIENT_EVIDENCE,
+    # and "this LLM call varies / we can't tell" is boilerplate the customer
+    # already knows -- so the pipeline filters those rows out of `recommend`
+    # (LLM-call nodes stay only when they came out deterministic).
+    assert 0 < len(report["recommend"]) < 6
     scores = [r["score"] for r in report["recommend"]]
     assert scores == sorted(scores, reverse=True)
     assert "validation" not in report
@@ -259,3 +265,35 @@ def test_run_pipeline_has_no_expected_vs_found_for_unknown_workflows():
         TraceEvent(**{**e.model_dump(), "workflow": "my-own-agent"}) for e in load_traces(DATA_PATH)
     ]
     assert "expected_vs_found" not in run_pipeline(events)
+
+
+def test_costless_traces_skip_the_capacity_solve_instead_of_reporting_zero():
+    """No recorded cost means unit_cost = unit_value = 0: a solve would
+    answer 'allocate nothing, objective 0', which reads as a broken report.
+    The stage suppresses itself and says why."""
+    from ingest import TraceEvent
+
+    events = [
+        TraceEvent(
+            trace_id="t", run_id=f"r{i}", workflow="wf", agent="a", event_type="decision",
+            node="llm_call", model="m", decision={"type": "next_action", "selected": "x"},
+            tokens={"input": 100, "output": 10},
+        )
+        for i in range(4)
+    ]
+    report = run_pipeline(events)
+    assert report["profile"]["skipped"] is True
+    assert "record no cost" in report["profile"]["reason"]
+    assert "Skipped" in report["capacity_context"]
+    # with prices the stage runs again
+    priced = run_pipeline(events, token_prices=(3.0, 15.0))
+    assert "skipped" not in priced["profile"]
+    assert "x" in priced["profile"]
+
+
+def test_price_lookup_is_exact_and_loud():
+    from profiler.prices import lookup_price
+
+    assert lookup_price("Claude-Sonnet-4") == (3.0, 15.0)
+    with pytest.raises(ValueError, match="no price known"):
+        lookup_price("gpt-99")

@@ -35,6 +35,7 @@ from ingest import DEFAULT_DEMAND_MODEL, normalize_raw_json, parse_raw_text
 from ingest.huggingface import fetch_records, list_data_files, parse_hf_url
 from ingest.trace_schema import TraceEvent
 from profiler import history, run_pipeline, run_poc, run_sweep
+from profiler.prices import PRICE_TABLE, lookup_price
 from profiler.sweep import _build_cases
 from profiler.behavior import OUTPUT_MATCHES, build_behavior
 from profiler.finops import build_finops
@@ -228,6 +229,7 @@ async def analyze(
     demand_model: str = Form(DEFAULT_DEMAND_MODEL),
     price_input_per_mtok: float | None = Form(None),
     price_output_per_mtok: float | None = Form(None),
+    model: str | None = Form(None),
     output_match: str = Form("exact"),
     keep_history: bool = Form(False),
 ) -> dict:
@@ -253,7 +255,11 @@ async def analyze(
     ``price_input_per_mtok`` / ``price_output_per_mtok`` ($ per 1M tokens)
     opt in to estimating cost for LLM calls that have tokens but no
     recorded cost -- offered by the report's data notice when cost is
-    missing.
+    missing. ``model`` (e.g. ``claude-sonnet-4``) fills both prices from a
+    small built-in list (see ``GET /prices``); unknown names are rejected
+    rather than guessed. When no prices are given at all and the traces
+    record no cost, the summary still prices its deduplicated savings at
+    a few example rates (``summary.savings_scenarios``).
 
     ``output_match`` sets how the behavior section compares outputs
     (exact / decision / normalized). ``keep_history`` also adds the events
@@ -269,6 +275,11 @@ async def analyze(
         if price_input_per_mtok < 0 or price_output_per_mtok < 0:
             raise HTTPException(status_code=400, detail="token prices can't be negative")
         token_prices = (price_input_per_mtok, price_output_per_mtok)
+    elif model is not None:
+        try:
+            token_prices = lookup_price(model)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
     parsed_ground_truth = None
     if ground_truth:
@@ -300,6 +311,21 @@ async def analyze(
             kept = {"error": str(exc)}
         report["history"] = kept
     return report
+
+
+@app.get("/prices")
+async def prices() -> dict:
+    """The built-in rough price table ($ per 1M input / output tokens) used
+    when ``model=`` is passed to ``/analyze`` -- estimates for scenario math
+    only; exact prices should be given via ``price_input_per_mtok`` /
+    ``price_output_per_mtok``."""
+    return {
+        "prices": [
+            {"model": name, "price_input_per_mtok": pin, "price_output_per_mtok": pout}
+            for name, (pin, pout) in sorted(PRICE_TABLE.items())
+        ],
+        "note": "rough list-price estimates; providers change prices -- override with exact prices when it matters",
+    }
 
 
 @app.get("/behavior")

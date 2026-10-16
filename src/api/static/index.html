@@ -139,6 +139,8 @@
   .gensummary .err-text { color: var(--red); }
   footer { margin-top: 60px; border-top: 1px solid var(--line); padding-top: 18px; color: var(--faint); font-size: 11px; }
   .takeaway { color: var(--ink); font-size: 13px; margin: 4px 0 12px; max-width: 820px; }
+  .takeaway ol.top5 { margin: 8px 0 4px 18px; padding: 0; }
+  .takeaway ol.top5 li { margin: 3px 0; }
   .takeaway:empty { display: none; }
   .takeaway b { color: var(--lime); font-weight: 400; }
   details.advanced { border: 1px solid var(--line); border-radius: 4px; padding: 10px 16px; margin: 28px 0 0; background: var(--panel); }
@@ -643,7 +645,7 @@ hf auth login</pre>
 
     <h2><span class="idx">02</span>Repetition <span style="font-size:12px;color:var(--faint)">— what the agent does over and over</span></h2>
     <p class="takeaway" id="seqTakeaway"></p>
-    <p class="lede">Repeated sequences: the same steps in the same order, recurring across runs. The sequence is shown as it actually ran in one real occurrence. <b>Follows</b> is how often the next step follows the previous one out of all the times that step ran — near 100% is a fixed procedure the model only rubber-stamps; lower means the model chooses between options, and the finding is a recurring shape, not a script. "Between steps" is the LLM calls (and their real tokens and cost) spent only on choosing the next step inside the sequence. Click a row to see an example.</p>
+    <p class="lede">Repeated sequences: the same steps in the same order, recurring across runs. The sequence is shown as it actually ran in one real occurrence. <b>Follows</b> is how often the next step follows the previous one out of all the times that step ran — near 100% is a fixed procedure the model only rubber-stamps; lower means the model chooses between options, and the finding is a recurring shape, not a script. "Between steps" is the LLM calls (and their real tokens and cost) spent only on choosing the next step inside the sequence. Click a row to see an example. <span class="cov">Most of those tokens are re-sent context, which providers typically serve from cache at a steep discount — treat token savings as an upper bound on the bill.</span></p>
     <table id="seqTable"><thead><tr><th>Sequence <span class="hint">(one real occurrence)</span></th><th class="num">Seen</th><th class="num">Runs</th><th class="num">Follows</th><th class="num">LLM calls between steps</th><th class="num">Tokens between steps</th><th class="num">Cost between steps</th><th class="num">Total cost</th></tr></thead><tbody></tbody></table>
     <p class="takeaway" id="callTakeaway"></p>
     <p class="lede">Repeated calls: the same operation with the identical input. If every repeat gave the same output, each repeat after the first was redundant (a cache candidate).</p>
@@ -2101,13 +2103,21 @@ function render(data) {
 
   // Profile
   const p = data.profile;
-  document.getElementById('profileStats').innerHTML =
-    statCard(Object.values(p.x).map(v => v.toFixed(3)).join(', '), 'leader x*') +
-    statCard(Object.values(p.y).map(v => v.toFixed(3)).join(', '), 'follower y*') +
-    statCard(p.objective.toFixed(4), 'objective') +
-    statCard(p.candidates.length, 'critical regions');
-  document.getElementById('profileExplanation').textContent = p.explanation;
-  document.getElementById('capacityContext').textContent = data.capacity_context;
+  if (p.skipped) {
+    // a degenerate solve (no cost data) suppresses itself -- show why,
+    // don't render x=0/y=0 as if it were a result
+    document.getElementById('profileStats').innerHTML = '';
+    document.getElementById('profileExplanation').textContent = p.reason;
+    document.getElementById('capacityContext').textContent = '';
+  } else {
+    document.getElementById('profileStats').innerHTML =
+      statCard(Object.values(p.x).map(v => v.toFixed(3)).join(', '), 'leader x*') +
+      statCard(Object.values(p.y).map(v => v.toFixed(3)).join(', '), 'follower y*') +
+      statCard(p.objective.toFixed(4), 'objective') +
+      statCard(p.candidates.length, 'critical regions');
+    document.getElementById('profileExplanation').textContent = p.explanation;
+    document.getElementById('capacityContext').textContent = data.capacity_context;
+  }
 
   // Provenance table: unit_cost/unit_value/capacity_headroom/max_demand, each
   // labeled OBSERVED/DERIVED/ASSUMED so the UI never implies a value was
@@ -2149,8 +2159,9 @@ function render(data) {
       `<td class="num">${info.usage_stats.count}</td></tr>`;
   }).join('');
 
-  // Sensitivity sweep across unit_value/unit_cost ratios
-  document.querySelector('#sensitivityTable tbody').innerHTML = p.sensitivity.map(s => `
+  // Sensitivity sweep across unit_value/unit_cost ratios (absent when the
+  // capacity solve skipped itself)
+  document.querySelector('#sensitivityTable tbody').innerHTML = (p.sensitivity || []).map(s => `
     <tr>
       <td>${s.ratio}×</td>
       <td class="num">${s.unit_value.toFixed(6)}</td>
@@ -2471,6 +2482,7 @@ function renderDataNotice(dq) {
     <div class="estimate">
       <div class="field"><label for="dqPriceIn">$ / 1M input tokens</label><input type="number" id="dqPriceIn" min="0" step="0.01" value="3"></div>
       <div class="field"><label for="dqPriceOut">$ / 1M output tokens</label><input type="number" id="dqPriceOut" min="0" step="0.01" value="15"></div>
+      <div class="field"><label for="dqModel">or pick a model</label><select id="dqModel"><option value="">—</option></select></div>
       <button type="button" class="ghost" id="dqEstimate">Estimate cost from tokens and re-run</button>
     </div>
     <div class="cov">Optional. Uses your model's list price; the report will label the cost as estimated.</div>`;
@@ -2478,6 +2490,23 @@ function renderDataNotice(dq) {
   el.className = 'dq' + (estimated && !missing.length ? ' estimated' : '');
   el.hidden = false;
   const rerun = () => form.requestSubmit();
+  // rough list prices from the server's table, for one-click estimating
+  fetch('/prices').then(r => r.json()).then(d => {
+    const sel = document.getElementById('dqModel');
+    if (!sel) return;
+    for (const p of d.prices) {
+      const opt = document.createElement('option');
+      opt.value = JSON.stringify([p.price_input_per_mtok, p.price_output_per_mtok]);
+      opt.textContent = `${p.model} ($${p.price_input_per_mtok}/$${p.price_output_per_mtok})`;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener('change', () => {
+      if (!sel.value) return;
+      const [pin, pout] = JSON.parse(sel.value);
+      document.getElementById('dqPriceIn').value = pin;
+      document.getElementById('dqPriceOut').value = pout;
+    });
+  }).catch(() => {});
   document.getElementById('dqEstimate')?.addEventListener('click', () => {
     const input = parseFloat(document.getElementById('dqPriceIn').value);
     const output = parseFloat(document.getElementById('dqPriceOut').value);
@@ -2498,10 +2527,31 @@ function renderSummary(data) {
     statCard(t.tokens.toLocaleString(), 'tokens') +
     statCard(t.runs.toLocaleString(), 'runs');
   const opps = sm.opportunities;
-  const top = opps.find(o => o.saving);
-  document.getElementById('summaryTakeaway').innerHTML = !opps.length
+  // The one-page answer: what you repeatedly do, what it costs, the fix.
+  const SHORT_FIX = {
+    EXTRACT_DETERMINISTIC_SUBSTEP: 'script these steps into one',
+    REPEATED_AGENT_PATTERN: 'batch into one call / route to a cheaper model',
+    CACHE_RESULT: 'reuse the first result',
+    CONDITIONAL_LLM_BYPASS: 'replace the call with a rule',
+    REVIEW_HIDDEN_STATE: 'find what varies',
+  };
+  const cost = o => o.saving ? money(o.saving) : o.saving_tokens ? `${tok(o.saving_tokens)} tokens` : null;
+  const top5 = opps.filter(o => cost(o)).slice(0, 5);
+  const dedup = sm.savings;
+  const savLine = dedup && dedup.tokens > 0
+    ? `Counting each action once, these remove at least <b>${tok(dedup.tokens)} tokens</b> (${dedup.llm_calls} LLM calls${dedup.cost ? `, ${money(dedup.cost)}` : ''}).`
+    : dedup && dedup.cost ? `Counting each action once, these remove at least <b>${money(dedup.cost)}</b> of observed cost.` : '';
+  const scen = sm.savings_scenarios && sm.savings_scenarios.length
+    ? ` At example rates that's ` + sm.savings_scenarios.map(s => `${money(s.saving_est)} at ${esc(s.label)} prices ($${s.price_input_per_mtok}/$${s.price_output_per_mtok} per Mtok)`).join(', ') + '.'
+    : '';
+  const caveat = dedup && dedup.tokens > 0
+    ? ' <span class="cov">Token savings include re-sent context, which providers typically cache-discount — treat them as an upper bound on the bill.</span>'
+    : '';
+  document.getElementById('summaryTakeaway').innerHTML = !top5.length
     ? 'Nothing repeated often enough to suggest a change yet.'
-    : `${sm.num_opportunities} opportunities found, showing the top ${opps.length} (at most 5 of each type)` + (top ? `. The largest: <b>${esc(top.title)}</b>, ${money(top.saving)} of observed cost.` : '.');
+    : `${sm.num_opportunities} opportunities found. What you actually do repeatedly:
+       <ol class="top5">${top5.map(o => `<li><b>${esc(o.title)}</b> — ${cost(o)} — ${esc(SHORT_FIX[o.type] || o.action)}</li>`).join('')}</ol>
+       ${savLine}${scen}${cave}`;
   const input = inp => inp && Object.keys(inp).length
     ? `<div class="inp">${Object.entries(inp).map(([k, v]) => `<span class="k">${esc(k)}:</span> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}`).join('\n')}</div>` : '';
   // one real occurrence of a repeated sequence, so the customer sees what

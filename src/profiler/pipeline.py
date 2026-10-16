@@ -101,27 +101,51 @@ def run_pipeline(
         "demand_model": demand_model,
     }
 
-    problem = build_capacity_problem_from_traces(
-        events,
-        workflow=selected_workflow,
-        unit_cost=unit_cost,
-        value_per_used_call=unit_value,
-        capacity_headroom=capacity_headroom,
-        demand_model=demand_model,
-    )
-    bpop_result = BPOP.solve(problem)
-    sensitivity = sensitivity_analysis(
-        events,
-        selected_workflow,
-        ratios=sensitivity_ratios,
-        unit_cost=unit_cost,
-        capacity_headroom=capacity_headroom,
-        demand_model=demand_model,
-    )
+    # A degenerate capacity solve (zero unit cost or value -- which is what
+    # costless traces produce) would answer "allocate nothing, objective 0",
+    # and showing that as a result makes the whole report look broken. The
+    # stage suppresses itself instead and says why.
+    if formula_used["unit_cost"] <= 0 or formula_used["unit_value"] <= 0:
+        bpop_result = None
+        sensitivity = []
+        bpop_skip_reason = (
+            f"Skipped: the capacity solve needs a positive cost and value per LLM call, and this data gives "
+            f"unit_cost={formula_used['unit_cost']:.6f}, unit_value={formula_used['unit_value']:.6f} -- the "
+            "traces record no cost. Set token prices (price_input_per_mtok / price_output_per_mtok, or "
+            "model=) or pass unit_cost / unit_value to enable it. The savings findings above don't depend "
+            "on this stage."
+        )
+    else:
+        problem = build_capacity_problem_from_traces(
+            events,
+            workflow=selected_workflow,
+            unit_cost=unit_cost,
+            value_per_used_call=unit_value,
+            capacity_headroom=capacity_headroom,
+            demand_model=demand_model,
+        )
+        bpop_result = BPOP.solve(problem)
+        bpop_skip_reason = None
+        sensitivity = sensitivity_analysis(
+            events,
+            selected_workflow,
+            ratios=sensitivity_ratios,
+            unit_cost=unit_cost,
+            capacity_headroom=capacity_headroom,
+            demand_model=demand_model,
+        )
 
     mined = mine(events, selected_workflow)
     scored = score(mined)
     recommendations = recommend(scored)
+    # "this LLM call is NON_DETERMINISTIC, score 0.5" is something every
+    # customer already knows about every LLM call -- recommending it 60
+    # times buries the rows worth reading. LLM-call nodes stay in the list
+    # only when they came out deterministic (rule-bypass candidates).
+    llm_nodes = {(e.agent, e.node) for e in events if e.model and e.workflow == selected_workflow}
+    recommendations = [
+        r for r in recommendations if (r["agent"], r["node"]) not in llm_nodes or r["deterministic"]
+    ]
 
     # Charge each step for the LLM call that chose it, so a tool's cost
     # isn't shown as $0 when an LLM call was spent deciding to run it.
@@ -184,12 +208,15 @@ def run_pipeline(
     # surfaced alongside the recommendations as read-only context a reader
     # can use to judge whether a costly node's spend lines up with the
     # workflow's sized capacity, but it never changes `score`.
-    bpop_capacity_context = (
-        f"B-POP sizes '{selected_workflow}' capacity at x*={bpop_result.x.get('x', 0):.3f} "
-        f"(allocated) against y*={bpop_result.y.get('y', 0):.3f} (used), from a "
-        f"{demand_model} demand model over observed per-run usage; objective={bpop_result.objective:.4f}. "
-        "This is workflow-level context for the recommendations below, not an input to any node's score."
-    )
+    if bpop_result is None:
+        bpop_capacity_context = bpop_skip_reason
+    else:
+        bpop_capacity_context = (
+            f"B-POP sizes '{selected_workflow}' capacity at x*={bpop_result.x.get('x', 0):.3f} "
+            f"(allocated) against y*={bpop_result.y.get('y', 0):.3f} (used), from a "
+            f"{demand_model} demand model over observed per-run usage; objective={bpop_result.objective:.4f}. "
+            "This is workflow-level context for the recommendations below, not an input to any node's score."
+        )
 
     for bucket in agents_summary.values():
         bucket["actions"].sort(key=lambda a: -a["total_cost"])
@@ -199,7 +226,11 @@ def run_pipeline(
         "data_quality": check_data_quality([e for e in recorded if e.workflow == selected_workflow], estimated),
         "observe": {**observed, "selected_workflow": selected_workflow},
         "formula": {"used": formula_used, "defaults": formula_defaults, "per_workflow": formula_by_workflow},
-        "profile": {**_serialize_bpop_result(bpop_result), "sensitivity": sensitivity},
+        "profile": (
+            {"skipped": True, "reason": bpop_skip_reason}
+            if bpop_result is None
+            else {**_serialize_bpop_result(bpop_result), "sensitivity": sensitivity}
+        ),
         "mine": {"by_agent": agents_summary},
         "score": {
             "weights": {"cost_weight": 0.5, "nondeterminism_weight": 0.5},

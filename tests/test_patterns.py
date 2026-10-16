@@ -174,3 +174,65 @@ def test_sequence_title_shows_the_actual_arguments_not_just_tool_names():
     events = [e for r in ("r1", "r2", "r3") for e in run(r)]
     (op,) = [o for o in _sequence_opportunities(repeated_sequences(events)) if o["nodes"] == ["Bash: grep", "Bash: sed"]]
     assert op["title"] == 'grep -n "r1" src/app.tsx → sed -i \'s/r1/x/\' src/app.tsx'
+
+
+def test_summary_deduplicates_overlapping_findings_and_prices_scenarios():
+    """Two sequences sharing a step are the same underlying loop -- the
+    deduplicated savings count it once, and costless traces get dollar
+    scenarios instead of $0."""
+    from profiler.mine import mine
+    from profiler.opportunities import build_summary, deduplicate
+
+    # search is followed by edit in half the runs and by read in the other
+    # half: two sequence findings, one shared step, one underlying loop
+    def steered(run_id, second):
+        return [
+            _router(run_id, cost=0), _tool(run_id, "search", q="x"),
+            _router(run_id, cost=0), _tool(run_id, second),
+        ]
+
+    events = [e for i, run in enumerate(("r1", "r2", "r3", "r4", "r5", "r6"))
+              for e in steered(run, "edit" if i % 2 == 0 else "read")]
+    rep = find_repetition(events, "wf")
+    seqs = [p["steps"] for p in rep["sequences"]]
+    assert ["search", "edit"] in seqs and ["search", "read"] in seqs
+
+    summary = build_summary(events, "wf", rep, mine(events, "wf"))
+    sav = summary["savings"]
+    assert sav["raw_sum_tokens"] > sav["tokens"], "overlapping findings must not be added up"
+    assert sav["llm_calls"] > 0
+    assert sav["opportunities_counted"] < sav["opportunities_total"]
+
+    # no cost recorded -> example-rate dollar scenarios from the split
+    scenarios = summary["savings_scenarios"]
+    assert scenarios and len(scenarios) == 3
+    est = scenarios[0]["saving_est"]
+    expected = sav["tokens_input"] / 1e6 * scenarios[0]["price_input_per_mtok"] + \
+        sav["tokens_output"] / 1e6 * scenarios[0]["price_output_per_mtok"]
+    assert abs(est - expected) < 1e-9
+
+
+def test_trivial_commands_never_become_cache_findings():
+    from profiler.opportunities import find_opportunities
+    from profiler.mine import mine
+
+    # echo repeats with identical input and output -- caching it saves
+    # nothing anyone would notice, so it must not become a finding
+    events = [e for i in range(4) for e in (_router(f"c{i}"), _tool(f"c{i}", "Bash: echo", result="deployed"))]
+    rep = find_repetition(events, "wf")
+    found = find_opportunities(events, "wf", rep, mine(events, "wf"))
+    assert all(o["type"] != "CACHE_RESULT" for o in found)
+
+
+def test_hidden_state_findings_are_demoted_and_capped():
+    from profiler.mine import mine
+    from profiler.opportunities import build_summary
+
+    # several LLM-call nodes with unexplained variance: at most one line
+    # in the summary, at the bottom -- they carry no savings
+    events = [e for run in ("r1", "r2", "r3", "r4") for e in _git_flow(run)]
+    summary = build_summary(events, "wf", find_repetition(events, "wf"), mine(events, "wf"))
+    hidden = [o for o in summary["opportunities"] if o["type"] == "REVIEW_HIDDEN_STATE"]
+    assert len(hidden) <= 1
+    if hidden:
+        assert summary["opportunities"][-1]["type"] == "REVIEW_HIDDEN_STATE"

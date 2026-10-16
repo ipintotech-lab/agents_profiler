@@ -8,15 +8,21 @@ the cost of the observed calls that would not have run, not a forecast.
 """
 from __future__ import annotations
 
+import json
 import re
 
 from ingest.trace_schema import TraceEvent
 
 from .patterns import step_signature
+from .prices import SCENARIOS
 
 from .mine import ActionStats
 
 MAX_PER_TYPE = 5
+# Hidden-state findings carry no savings of their own -- one line in the
+# summary is enough to say "something unrecorded changes this", the rest
+# would bury the patterns that do save tokens.
+MAX_PER_TYPE_BY_TYPE = {"REVIEW_HIDDEN_STATE": 1}
 # A sequence whose steps follow each other at least this often is a fixed
 # procedure: the LLM calls between the steps only rubber-stamp the next
 # one, so the sequence can become one scripted step. Below it the model
@@ -41,6 +47,13 @@ WRITE_WORDS = frozenset({
 })
 # ...and these only as the first word ("log_activity" writes, "fetch_error_log" doesn't).
 WRITE_VERBS = frozenset({"log", "page", "notify", "trigger", "schedule", "apply", "pause", "cancel", "close", "book"})
+
+# Commands whose result is never decision-relevant: caching an ``echo``
+# saves nothing anyone would notice, so they never become CACHE_RESULT
+# findings -- however often they repeat.
+TRIVIAL_COMMANDS = frozenset({
+    "echo", "printf", "true", "false", "cd", "pwd", "ls", "sleep", "date", "which", "rm", "mkdir", "touch",
+})
 
 # Plain-language meaning of each optimization type, shown next to the name.
 OPTIMIZATION_TYPES = {
@@ -147,6 +160,11 @@ def has_side_effect(name: str) -> bool:
     )
 
 
+def _is_trivial(node: str) -> bool:
+    """Whether a node is a command whose output nobody decisions on."""
+    return node.split(":")[-1].strip().lower() in TRIVIAL_COMMANDS
+
+
 def _cache_opportunities(calls: list[dict], names: dict[str, set[str]]) -> list[dict]:
     return [
         {
@@ -165,6 +183,7 @@ def _cache_opportunities(calls: list[dict], names: dict[str, set[str]]) -> list[
         }
         for c in calls
         if c["redundant_calls"] > 0
+        and not _is_trivial(c["node"])
         and not any(has_side_effect(n) for n in names.get(c["node"], set()) | {c["node"]})
     ]
 
@@ -245,6 +264,35 @@ def find_opportunities(
     return opportunities
 
 
+def deduplicate(opportunities: list[dict]) -> list[dict]:
+    """Largest saving first, skipping any opportunity that shares a step
+    with one already taken -- the same underlying loop shows up as several
+    overlapping findings, and adding them up would double-count the same
+    calls. The result is a lower bound: every action counted at most once."""
+    has_dollars = any(o["saving"] for o in opportunities)
+
+    def rank(o: dict) -> float:
+        return o["saving"] if has_dollars and o["saving"] else (o.get("saving_tokens") or 0)
+
+    per_input = {"CACHE_RESULT", "CONDITIONAL_LLM_BYPASS"}
+
+    def scope(o: dict) -> tuple:
+        return (o["type"], json.dumps(o.get("input"), sort_keys=True, default=str), o.get("trigger"))
+
+    def overlaps(a: dict, b: dict) -> bool:
+        # two findings touch the same action when they share a node, unless
+        # both are per-input findings of one kind for different inputs
+        if not set(a["nodes"]) & set(b["nodes"]):
+            return False
+        return not (a["type"] == b["type"] in per_input and scope(a) != scope(b))
+
+    taken: list[dict] = []
+    for o in sorted((o for o in opportunities if rank(o) > 0), key=lambda o: -rank(o)):
+        if not any(overlaps(o, t) for t in taken):
+            taken.append(o)
+    return taken
+
+
 def build_summary(events: list[TraceEvent], workflow: str, repetition: dict, stats: list[ActionStats]) -> dict:
     relevant = [e for e in events if e.workflow == workflow]
     opportunities = find_opportunities(events, workflow, repetition, stats)
@@ -253,17 +301,57 @@ def build_summary(events: list[TraceEvent], workflow: str, repetition: dict, sta
     shown = []
     for o in opportunities:
         per_type[o["type"]] = per_type.get(o["type"], 0) + 1
-        if per_type[o["type"]] <= MAX_PER_TYPE:
+        if per_type[o["type"]] <= MAX_PER_TYPE_BY_TYPE.get(o["type"], MAX_PER_TYPE):
             shown.append(o)
+    # hidden-state findings go to the bottom: they carry no savings, and a
+    # list that leads with "something varies" reads as noise
+    shown.sort(key=lambda o: o["type"] == "REVIEW_HIDDEN_STATE")
+
+    # One honest total: opportunities overlap (the same loop appears as
+    # several sequences), so the deduplicated figure counts each action at
+    # most once and is labeled a lower bound.
+    dedup = deduplicate(opportunities)
+    has_dollars = any(o["saving"] for o in opportunities)
+    savings = {
+        "cost": sum(o["saving"] or 0 for o in dedup),
+        "tokens": sum(o.get("saving_tokens") or 0 for o in dedup),
+        "tokens_input": sum(o.get("saving_tokens_input") or 0 for o in dedup),
+        "tokens_output": sum(o.get("saving_tokens_output") or 0 for o in dedup),
+        "llm_calls": sum(o.get("saving_llm_calls") or 0 for o in dedup),
+        "opportunities_counted": len(dedup),
+        "opportunities_total": len(opportunities),
+        "raw_sum_tokens": sum(o.get("saving_tokens") or 0 for o in opportunities),
+    }
+    # When the traces record no cost, token savings still mean nothing to a
+    # wallet -- so the summary prices them at a few example rates, clearly
+    # labeled as estimates.
+    scenarios = None
+    if not has_dollars and savings["tokens"] > 0:
+        scenarios = [
+            {
+                "label": label,
+                "price_input_per_mtok": price_in,
+                "price_output_per_mtok": price_out,
+                "saving_est": savings["tokens_input"] / 1e6 * price_in
+                + savings["tokens_output"] / 1e6 * price_out,
+            }
+            for label, price_in, price_out in SCENARIOS
+        ]
     return {
         "totals": _totals(relevant),
         "opportunities": shown,
         "num_opportunities": len(opportunities),
+        "savings": savings,
+        "savings_scenarios": scenarios,
         "optimization_types": OPTIMIZATION_TYPES,
         "notes": (
             "Savings are the observed cost of calls that would not have run -- measured from these traces, "
             "not a forecast. When the traces record no cost, savings are in tokens instead "
-            "(`saving_tokens`, `saving_llm_calls`). Opportunities can overlap (a cached call may sit inside "
-            "a scripted sequence), so don't add them up as a guaranteed total."
+            "(`saving_tokens`, `saving_llm_calls`). `savings` is deduplicated: opportunities overlap "
+            "(the same loop can appear as several findings), so it counts each action at most once and "
+            "is a lower bound. Token savings count input and output tokens and include re-sent context: "
+            "most of an agent's input tokens are prompt context sent again on every call, which providers "
+            "typically serve from cache at a steep discount -- treat token savings as an upper bound on "
+            "the bill, and the dollar scenarios as rough estimates at example rates."
         ),
     }
