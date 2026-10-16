@@ -179,3 +179,105 @@ def test_multi_file_analyze_counts_resumed_session_runs_once():
     # repetition inside a file is the signal, never collapsed: fetch+lint
     # with identical inputs still show up as repeated calls
     assert report["repetition"]["calls"], "within-file repetition must survive the dedup"
+
+
+def test_truncated_multipart_body_is_rejected_loudly():
+    """A file that grows while the client builds the request makes the body
+    overrun its Content-Length; the server reads only the announced bytes
+    and the multipart parser silently drops every part after the cut. That
+    must never become a silently partial corpus: a body without the
+    closing boundary is a 400, not a 200 with mangled data."""
+    import io
+    import json
+
+    import httpx
+    from fastapi.testclient import TestClient
+
+    from api.main import app
+
+    def row(run_id, node, event_type="tool_call", **extra):
+        return {"trace_id": "t", "run_id": run_id, "workflow": "wf", "agent": "a",
+                "event_type": event_type, "node": node, **extra}
+
+    body = ("\r\n".join([
+        "--BOUNDARY",
+        'Content-Disposition: form-data; name="file"; filename="a.jsonl"',
+        "",
+        json.dumps(row("r1", "fetch")),
+        "--BOUNDARY",
+        'Content-Disposition: form-data; name="price_input_per_mtok"',
+        "",
+        "3",
+        "--BOUNDARY--",
+    ])).encode()
+    client = TestClient(app)
+    # intact body passes the guard (may fail later parsing -- fine, not a
+    # truncation)
+    resp_ok = client.post(
+        "/analyze",
+        content=body,
+        headers={"content-type": "multipart/form-data; boundary=BOUNDARY"},
+    )
+    assert resp_ok.status_code != 400 or "truncated" not in resp_ok.json().get("detail", "")
+    # the same body cut before the closing boundary is a loud 400
+    cut = body[: body.rindex(b"--BOUNDARY") + 2]
+    resp = client.post(
+        "/analyze",
+        content=cut,
+        headers={"content-type": "multipart/form-data; boundary=BOUNDARY"},
+    )
+    assert resp.status_code == 400
+    assert "truncated" in resp.json()["detail"]
+
+
+def test_same_corpus_any_upload_order_gives_identical_report():
+    """The verification loop requires: same corpus -> same report, any file
+    order. Files are processed in canonical (digest) order, duplicate runs
+    keep the most informative copy, and events are emitted in canonical
+    order -- so the report must be identical, not just similar."""
+    import io
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from api.main import app
+
+    def row(run_id, node, event_type="tool_call", **extra):
+        return {"trace_id": "t", "run_id": run_id, "workflow": "wf", "agent": "a",
+                "event_type": event_type, "node": node, **extra}
+
+    def router(run_id, cost=0.0):
+        return row(run_id, "llm_call", event_type="decision", model="m",
+                   decision={"type": "next_action", "selected": "x"},
+                   tokens={"input": 100, "output": 10}, cost=cost)
+
+    # run r1 exists in two files; the copy in b.jsonl records cost, so it
+    # must win regardless of order
+    file_a = "\n".join(json.dumps(r) for r in [
+        router("r1"), row("r1", "fetch"), row("r1", "lint"),
+        router("r2"), row("r2", "fetch"), row("r2", "lint"),
+    ])
+    file_b = "\n".join(json.dumps(r) for r in [
+        router("r1", cost=0.2), row("r1", "fetch"), row("r1", "lint"),  # better copy of r1
+        router("r3"), row("r3", "fetch"), row("r3", "lint"),
+    ])
+
+    def upload(order):
+        client = TestClient(app)
+        resp = client.post(
+            "/analyze",
+            files=[("file", (n, io.BytesIO(c.encode()), "application/jsonl")) for n, c in order],
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    ab = upload([("a.jsonl", file_a), ("b.jsonl", file_b)])
+    ba = upload([("b.jsonl", file_b), ("a.jsonl", file_a)])
+    assert ab["summary"] == ba["summary"], "same corpus, different order: summary must be identical"
+    assert ab["repetition"] == ba["repetition"]
+    assert ab["mine"] == ba["mine"]
+    # the cost-recording copy of r1 won in both orders
+    assert ab["summary"]["totals"]["cost"] == 0.2
+    # file summaries are name-sorted and identical
+    assert ab["observe"]["files"] == ba["observe"]["files"]
+    assert [f["name"] for f in ab["observe"]["files"]] == ["a.jsonl", "b.jsonl"]

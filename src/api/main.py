@@ -20,7 +20,7 @@ from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from bpop import (
@@ -79,6 +79,42 @@ app = FastAPI(
     description="Bi-level parametric optimization (leader/follower) solver prototype.",
     version="0.1.0",
 )
+
+
+@app.middleware("http")
+async def reject_truncated_multipart(request, call_next):
+    """A complete multipart body ends with the closing ``--boundary--``
+    marker. When a file grows while the client builds the request, the
+    body overruns the Content-Length the client announced, the server
+    reads only the announced bytes, and the multipart parser silently
+    drops every part after the cut -- a mangled corpus would then be
+    analyzed and reported as if it were the real one (field-reported as
+    an order-dependence bug: the lost tail happened to be one session
+    file plus the price fields). Never accept that: check the closing
+    marker and fail loudly instead. Buffers the request body in memory --
+    fine for this service's corpus sizes."""
+    content_type = request.headers.get("content-type") or ""
+    if request.method == "POST" and content_type.startswith("multipart/form-data"):
+        body = await request.body()
+        boundary = None
+        for part in content_type.split(";"):
+            part = part.strip()
+            if part.startswith("boundary="):
+                boundary = part[len("boundary=") :].strip('"').encode()
+                break
+        if boundary is not None and not body.rstrip(b"\r\n").endswith(b"--" + boundary + b"--"):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "detail": (
+                        "multipart body is truncated: it does not end with the closing boundary. "
+                        "The usual cause is uploading a file that changed while the request was "
+                        "being built (e.g. a session file still being written). Re-upload after "
+                        "the file stops changing -- a silently partial corpus is worse than an error."
+                    )
+                },
+            )
+    return await call_next(request)
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -187,26 +223,62 @@ def _run_signature(events: list[TraceEvent]) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def _drop_runs_already_seen(
-    file_events: list[TraceEvent], seen_runs: set[str]
-) -> tuple[list[TraceEvent], int]:
-    """Remove runs that an earlier file already contributed (resumed-session
-    history), counting each once. Runs are only deduplicated *across* files,
-    never within one -- repetition inside a file is the signal, not an
-    artifact. Returns the kept events and how many runs were dropped."""
-    by_run: dict[str, list[TraceEvent]] = defaultdict(list)
-    for e in file_events:
-        by_run[e.run_id].append(e)
-    kept: list[TraceEvent] = []
-    dropped = 0
-    for run_id, run_events in by_run.items():
-        signature = _run_signature(run_events)
-        if signature in seen_runs:
-            dropped += 1
-            continue
-        seen_runs.add(signature)
-        kept.extend(run_events)
-    return kept, dropped
+def _run_information(run_events: list[TraceEvent]) -> tuple:
+    """How much a copy of a run records: recorded cost first, then tokens,
+    then event count -- when the same run arrives in several files, the
+    most informative copy is kept, so which copy survives never depends
+    on upload order."""
+    return (sum(e.cost for e in run_events), sum(e.tokens.input + e.tokens.output for e in run_events), len(run_events))
+
+
+def _deduplicate_runs_across_files(
+    parsed: list[tuple[str, str, list[TraceEvent]]]
+) -> tuple[list[TraceEvent], list[dict]]:
+    """Collapse runs that arrived in more than one file (resumed-session
+    history) to one deterministically-chosen copy, and emit every kept run
+    in a canonical order. A run is the same run when its id, workflow,
+    user input and whole event sequence match -- a genuine repeat habit
+    has different content or different ids, so it is never collapsed.
+
+    Which copy wins never depends on upload order: files arrive here in
+    canonical (content-digest) order, and the most informative copy beats
+    the rest, with the source digest as the tie-break. Runs are only
+    deduplicated *across* files, never within one -- repetition inside a
+    file is the signal, not an artifact."""
+    # signature -> (rank, winning file name, events); rank orders copies by
+    # how much they record, then by source digest, so the winner is fixed
+    best: dict[str, tuple[tuple, str, list[TraceEvent]]] = {}
+    contained: dict[str, int] = {name: 0 for _, name, _ in parsed}
+    for digest, name, file_events in parsed:
+        by_run: dict[str, list[TraceEvent]] = defaultdict(list)
+        for e in file_events:
+            by_run[e.run_id].append(e)
+        for run_id, run_events in by_run.items():
+            contained[name] += 1
+            signature = _run_signature(run_events)
+            candidate = (_run_information(run_events), digest)
+            incumbent = best.get(signature)
+            if incumbent is None or candidate > incumbent[0]:
+                best[signature] = (candidate, name, run_events)
+    # per-file stats from the final winners: duplicate_runs is the runs a
+    # file contains but lost to a better copy in another file
+    won: dict[str, int] = {name: 0 for _, name, _ in parsed}
+    for rank, name, run_events in best.values():
+        won[name] += 1
+    # emit in canonical order (by signature), so the event list -- and
+    # everything computed from it -- is identical for any upload order
+    events: list[TraceEvent] = []
+    for signature in sorted(best):
+        events.extend(best[signature][2])
+    summaries = [
+        {
+            "name": name,
+            "num_events": sum(len(best[s][2]) for s in best if best[s][1] == name),
+            **({"duplicate_runs": contained[name] - won[name]} if contained[name] > won[name] else {}),
+        }
+        for _, name, _ in parsed
+    ]
+    return events, summaries
 
 
 async def _load_events(
@@ -217,27 +289,26 @@ async def _load_events(
     events: list[TraceEvent] = []
     file_summaries: list[dict] = []
     seen_digests: dict[str, str] = {}
-    # Resumed sessions copy their history into a new file, so the same run
-    # can arrive inside two uploads. A run is the same run when its id,
-    # workflow, user input and whole event sequence match -- a genuine
-    # repeat habit has different content or different ids, so it is never
-    # collapsed.
-    seen_runs: set[str] = set()
-    if not file and not hf_url:
-        raise HTTPException(status_code=400, detail="upload a trace file or give a Hugging Face dataset link")
+    # The same corpus must produce the same report regardless of upload
+    # order: files are processed in canonical order (by content digest),
+    # and when the same run arrives in several files, one deterministically
+    # chosen copy is kept (the one that records more), never whichever
+    # happened to arrive first.
+    uploads: list[tuple[str, str, bytes]] = []  # (digest, name, raw)
     for upload in file or []:
         raw = await upload.read()
-        name = upload.filename or f"file {len(file_summaries) + 1}"
+        name = upload.filename or f"file {len(uploads) + 1}"
         digest = hashlib.sha256(raw).hexdigest()
         if digest in seen_digests:
             raise HTTPException(status_code=400, detail=f"{name} has the same content as {seen_digests[digest]}")
         seen_digests[digest] = name
-        file_events = _parse_trace_events(raw, name)
-        kept, duplicates = _drop_runs_already_seen(file_events, seen_runs)
-        events.extend(kept)
-        file_summaries.append(
-            {"name": name, "num_events": len(kept), **({"duplicate_runs": duplicates} if duplicates else {})}
-        )
+        uploads.append((digest, name, raw))
+    uploads.sort(key=lambda u: u[0])
+    if not uploads and not hf_url:
+        raise HTTPException(status_code=400, detail="upload a trace file or give a Hugging Face dataset link")
+    parsed = [(digest, name, _parse_trace_events(raw, name)) for digest, name, raw in uploads]
+    events, file_summaries = _deduplicate_runs_across_files(parsed)
+    file_summaries.sort(key=lambda f: f["name"])
     if hf_url:
         if not 1 <= hf_limit <= HF_MAX_LIMIT:
             raise HTTPException(status_code=400, detail=f"hf_limit must be between 1 and {HF_MAX_LIMIT}")
