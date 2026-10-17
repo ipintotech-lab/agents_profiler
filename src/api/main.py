@@ -54,9 +54,10 @@ from rawdata_gen.agents.common import to_jsonl
 from rawdata_gen.claude_code_sessions import generate_sessions
 from rawdata_gen.generate_traces import AGENT_GENERATORS, build_dataset_manifest
 from rawdata_gen.ground_truth import EXPECTED_FINDINGS
-from saas import auth
+from saas import auth, files
 from saas.config import get_settings
 from saas.headers import SecurityHeaders
+from saas.limits import MULTIPART_OVERHEAD, BodySizeLimit
 
 
 class GenerateRequest(BaseModel):
@@ -89,9 +90,17 @@ app = FastAPI(
 )
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
-app.add_middleware(SecurityHeaders, page=_STATIC_DIR / "index.html")
+
+def _max_body_bytes() -> int:
+    s = get_settings()
+    return s.max_files_per_upload * s.max_file_bytes + MULTIPART_OVERHEAD
+
+
+app.add_middleware(BodySizeLimit, max_bytes=_max_body_bytes)
+app.add_middleware(SecurityHeaders, page=_STATIC_DIR / "index.html")  # outermost: 413s get the headers too
 get_settings()  # fail at startup, not on the first request, if AUTH_MODE is misconfigured
 app.include_router(auth.router)
+app.include_router(files.router)  # /api/*: 404 in demo mode (saas.auth.principal)
 
 
 def _capacity_allocation_demo_problem() -> BilevelProblem:

@@ -97,6 +97,13 @@ CREATE TABLE IF NOT EXISTS results (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS results_tenant ON results (tenant_id, job_id);
+CREATE TABLE IF NOT EXISTS download_tokens (
+    token_hash TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants (id),
+    file_id TEXT NOT NULL REFERENCES files (id),
+    user_id TEXT NOT NULL REFERENCES users (id),
+    expires_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audit_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,
