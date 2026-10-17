@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
@@ -55,6 +55,8 @@ from rawdata_gen.claude_code_sessions import generate_sessions
 from rawdata_gen.generate_traces import AGENT_GENERATORS, build_dataset_manifest
 from rawdata_gen.ground_truth import EXPECTED_FINDINGS
 from saas import auth, files, jobs
+from saas import db as saas_db
+from saas.auth import Principal, optional_principal
 from saas.config import get_settings
 from saas.headers import SecurityHeaders
 from saas.limits import MULTIPART_OVERHEAD, BodySizeLimit
@@ -102,6 +104,21 @@ get_settings()  # fail at startup, not on the first request, if AUTH_MODE is mis
 app.include_router(auth.router)
 app.include_router(files.router)  # /api/*: 404 in demo mode (saas.auth.principal)
 app.include_router(jobs.router)
+
+
+def _qa_tool(request: Request) -> None:
+    """The generators, sweeps and raw solver are QA tools: public in the
+    demo, platform admins only once customers sign in (they're CPU-heavy
+    and not part of the product)."""
+    if get_settings().saas:
+        auth.platform_admin(auth.principal(request))
+
+
+def _tenant(p: Principal | None) -> str:
+    return p.tenant_id if p else ""
+
+
+QA_TOOL = [Depends(_qa_tool)]
 
 
 def _capacity_allocation_demo_problem() -> BilevelProblem:
@@ -224,13 +241,17 @@ def _hf_error(exc: Exception) -> HTTPException:
 
 
 @app.post("/huggingface/files")
-async def huggingface_files(url: str = Form(...), token: str | None = Form(None)) -> dict:
+async def huggingface_files(
+    url: str = Form(...),
+    token: str | None = Form(None),
+    p: Principal | None = Depends(optional_principal),  # noqa: B008
+) -> dict:
     """The JSON / JSON Lines files in a Hugging Face dataset that /analyze
     can read, for picking one in the dashboard. A link that already names a
     file returns just that file."""
     try:
         ref = parse_hf_url(url)
-        files = await run_in_threadpool(list_data_files, ref, token or None)
+        files = await run_in_threadpool(list_data_files, ref, token or None, p is None)
     except (ValueError, RuntimeError, OSError) as exc:
         raise _hf_error(exc) from exc
     if ref.path and ref.path in files:
@@ -239,10 +260,16 @@ async def huggingface_files(url: str = Form(...), token: str | None = Form(None)
 
 
 async def _load_events(
-    file: list[UploadFile] | None, hf_url: str | None, hf_file: str | None, hf_limit: int, hf_token: str | None
+    file: list[UploadFile] | None,
+    hf_url: str | None,
+    hf_file: str | None,
+    hf_limit: int,
+    hf_token: str | None,
+    server_token: bool = True,
 ) -> tuple[list[TraceEvent], list[dict]]:
     """Events from uploaded files and / or a Hugging Face dataset file, and
-    a summary per source."""
+    a summary per source. ``server_token=False`` (signed-in customers)
+    never falls back to the server's own Hugging Face token."""
     events: list[TraceEvent] = []
     file_summaries: list[dict] = []
     seen_digests: dict[str, str] = {}
@@ -262,7 +289,9 @@ async def _load_events(
         if not 1 <= hf_limit <= HF_MAX_LIMIT:
             raise HTTPException(status_code=400, detail=f"hf_limit must be between 1 and {HF_MAX_LIMIT}")
         try:
-            records, path = await run_in_threadpool(fetch_records, hf_url, hf_file or None, hf_limit, hf_token or None)
+            records, path = await run_in_threadpool(
+                fetch_records, hf_url, hf_file or None, hf_limit, hf_token or None, server_token
+            )
         except (ValueError, RuntimeError, OSError) as exc:
             raise _hf_error(exc) from exc
         name = f"{parse_hf_url(hf_url).repo_id}/{path}"
@@ -293,6 +322,7 @@ async def analyze(
     output_match: str = Form("exact"),
     keep_history: bool = Form(False),
     order_resolver: str = Form("simple"),
+    p: Principal | None = Depends(optional_principal),  # noqa: B008
 ) -> dict:
     """Run the uploaded trace file(s) through Observe -> Profile -> Mine ->
     Score -> Recommend for one workflow (auto-picked if not given).
@@ -338,7 +368,7 @@ async def analyze(
         if price_input_per_mtok < 0 or price_output_per_mtok < 0:
             raise HTTPException(status_code=400, detail="token prices can't be negative")
         token_prices = (price_input_per_mtok, price_output_per_mtok)
-    events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
+    events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token, p is None)
     parsed_ground_truth = None
     if ground_truth:
         try:
@@ -346,7 +376,9 @@ async def analyze(
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=422, detail=f"could not parse ground_truth: {exc}") from exc
     try:
-        report = run_pipeline(
+        # off the event loop: a large upload must not stall every other request
+        report = await run_in_threadpool(
+            run_pipeline,
             events,
             workflow=workflow or None,
             unit_cost=unit_cost,
@@ -364,7 +396,7 @@ async def analyze(
     if keep_history:
         try:
             kept = await run_in_threadpool(
-                history.add, events, history.dataset_label([f["name"] for f in file_summaries])
+                history.add, events, history.dataset_label([f["name"] for f in file_summaries]), _tenant(p)
             )
         except ValueError as exc:
             kept = {"error": str(exc)}
@@ -378,6 +410,7 @@ async def behavior(
     node: str | None = None,
     where: str | None = None,
     output_match: str = "exact",
+    p: Principal | None = Depends(optional_principal),  # noqa: B008
 ) -> dict:
     """Behavior statistics over every event kept in history (see
     ``/analyze``'s ``keep_history``) -- the same section the report shows
@@ -385,25 +418,44 @@ async def behavior(
     keeps only events whose input has that value; ``node`` keeps one action."""
     if output_match not in OUTPUT_MATCHES:
         raise HTTPException(status_code=400, detail=f"output_match must be one of {', '.join(OUTPUT_MATCHES)}")
-    events = await run_in_threadpool(history.load, workflow)
+    events = await run_in_threadpool(history.load, workflow, _tenant(p))
     if node:
         events = [e for e in events if e.node == node]
     try:
         result = build_behavior(events, workflow, output_match, where)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {**result, "history": history.summary()}
+    return {**result, "history": _history_summary(p)}
+
+
+def _history_summary(p: Principal | None) -> dict:
+    summary = history.summary(_tenant(p))
+    if p is not None:
+        summary.pop("path")  # the server's file layout is not the customer's business
+    return summary
 
 
 @app.get("/behavior/history")
-async def behavior_history() -> dict:
-    return history.summary()
+async def behavior_history(p: Principal | None = Depends(optional_principal)) -> dict:  # noqa: B008
+    return _history_summary(p)
 
 
 @app.delete("/behavior/history")
-async def behavior_history_clear(workflow: str | None = None, older_than_days: float | None = None) -> dict:
-    deleted = await run_in_threadpool(history.clear, workflow, older_than_days)
-    return {"deleted": deleted, **history.summary()}
+async def behavior_history_clear(
+    workflow: str | None = None,
+    older_than_days: float | None = None,
+    p: Principal | None = Depends(optional_principal),  # noqa: B008
+) -> dict:
+    """Delete kept events: in SaaS mode only the caller's tenant's, and
+    only by its owners and admins."""
+    if p is not None and p.role not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="only owners and admins can clear history")
+    deleted = await run_in_threadpool(history.clear, workflow, older_than_days, _tenant(p))
+    if p is not None:
+        with saas_db.connect() as conn:
+            saas_db.audit(conn, "history.clear", tenant_id=p.tenant_id, user_id=p.user_id,
+                          detail=f"{deleted} events")
+    return {"deleted": deleted, **_history_summary(p)}
 
 
 @app.post("/finops")
@@ -415,6 +467,7 @@ async def finops(
     hf_token: str | None = Form(None),
     output_match: str = Form("exact"),
     runs_per_month: float | None = Form(None),
+    p: Principal | None = Depends(optional_principal),  # noqa: B008
 ) -> dict:
     """AI Agent FinOps view of the uploaded traces (same inputs as
     ``/analyze``): spend across every workflow, avoidable spend as a lower
@@ -431,7 +484,7 @@ async def finops(
         aggregate = await _read_aggregate(file)
         if aggregate is not None:
             return aggregate
-    events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
+    events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token, p is None)
     try:
         result = await run_in_threadpool(build_finops, events, output_match, runs_per_month)
     except ValueError as exc:
@@ -440,7 +493,7 @@ async def finops(
     return result
 
 
-@app.post("/generate")
+@app.post("/generate", dependencies=QA_TOOL)
 def generate(req: GenerateRequest) -> dict:
     """Generate synthetic trace data (``rawdata_gen``) for the dashboard's
     "generate sample data" path: the mock agents' events, or Claude Code
@@ -503,7 +556,7 @@ def _generate_claude_code(req: GenerateRequest, rng: random.Random, seed: int) -
     }
 
 
-@app.post("/validate_seed")
+@app.post("/validate_seed", dependencies=QA_TOOL)
 def validate_seed(req: GenerateRequest) -> dict:
     """Regenerate the requested dataset twice from the same seed (a fresh
     ``seed`` is resolved and reported if none was given) and confirm the
@@ -519,7 +572,7 @@ def validate_seed(req: GenerateRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/validate_seed_range")
+@app.post("/validate_seed_range", dependencies=QA_TOOL)
 def validate_seed_range(req: ValidateSeedRangeRequest) -> dict:
     """``verify_seed_reproducibility`` across every seed in
     [seed_start, seed_end] (default 1-30), so reproducibility is checked
@@ -532,7 +585,7 @@ def validate_seed_range(req: ValidateSeedRangeRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/run_sweep")
+@app.post("/run_sweep", dependencies=QA_TOOL)
 def run_sweep_endpoint(seed: int = 1) -> dict:
     """Regression/stress-test the pipeline across a grid of agent counts,
     variances, demand models, total_lines volumes (1000-10000), and
@@ -556,7 +609,7 @@ def poc_expected() -> list[dict]:
     ]
 
 
-@app.post("/poc/run")
+@app.post("/poc/run", dependencies=QA_TOOL)
 def run_poc_endpoint(
     calibration_seed_count: int = 5,
     validation_seed_count: int = 5,
@@ -610,7 +663,7 @@ def capacity_allocation_example() -> dict:
     return _serialize_result(result)
 
 
-@app.post("/solve")
+@app.post("/solve", dependencies=QA_TOOL)
 def solve(problem: BilevelProblem) -> dict:
     try:
         result = BPOP.solve(problem)

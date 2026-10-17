@@ -88,9 +88,14 @@ def parse_hf_url(url: str) -> HFRef:
     return HFRef(repo_id, "main", "/".join(rest) or None)
 
 
-def resolve_token(token: str | None = None) -> str | None:
+def resolve_token(token: str | None = None, server_token: bool = True) -> str | None:
+    """``token``, else (with ``server_token``) ``HF_TOKEN`` or the saved
+    login. A multi-tenant server passes ``server_token=False``: its own
+    token must not unlock gated datasets for customers who lack access."""
     if token:
         return token
+    if not server_token:
+        return None
     if os.environ.get("HF_TOKEN"):
         return os.environ["HF_TOKEN"]
     hf_home = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
@@ -125,13 +130,13 @@ def _open(url: str, token: str | None, ref: HFRef):
         raise
 
 
-def list_data_files(ref: HFRef, token: str | None = None) -> list[str]:
+def list_data_files(ref: HFRef, token: str | None = None, server_token: bool = True) -> list[str]:
     """Paths of the files in the dataset this module can read, limited to
     ``ref.path`` when it names a directory."""
     api = f"{HF_ENDPOINT}/api/datasets/{ref.repo_id}"
     if ref.revision != "main":
         api += f"/revision/{urllib.parse.quote(ref.revision, safe='')}"
-    with _open(api, resolve_token(token), ref) as resp:
+    with _open(api, resolve_token(token, server_token), ref) as resp:
         info = json.load(resp)
     files = [s["rfilename"] for s in info.get("siblings", [])]
     prefix = f"{ref.path.rstrip('/')}/" if ref.path else ""
@@ -170,7 +175,9 @@ def _iter_lines(resp, path: str) -> Iterator[bytes]:
         yield buffer
 
 
-def iter_records(ref: HFRef, path: str, token: str | None = None, limit: int | None = None) -> Iterator[Any]:
+def iter_records(
+    ref: HFRef, path: str, token: str | None = None, limit: int | None = None, server_token: bool = True
+) -> Iterator[Any]:
     """Stream records from one dataset file: one per line for JSON Lines,
     or the items of a top-level array for a ``.json`` document. Stops
     downloading once ``limit`` records have been read."""
@@ -178,7 +185,7 @@ def iter_records(ref: HFRef, path: str, token: str | None = None, limit: int | N
         raise ValueError(f"unsupported file type: {path} (expected one of {', '.join(SUPPORTED_SUFFIXES)})")
     url = f"{HF_ENDPOINT}/datasets/{ref.repo_id}/resolve/{urllib.parse.quote(ref.revision, safe='')}/{urllib.parse.quote(path)}"
     count = 0
-    with _open(url, resolve_token(token), ref) as resp:
+    with _open(url, resolve_token(token, server_token), ref) as resp:
         if ".jsonl" in path:
             for line in _iter_lines(resp, path):
                 if limit is not None and count >= limit:
@@ -200,7 +207,7 @@ def iter_records(ref: HFRef, path: str, token: str | None = None, limit: int | N
 
 
 def fetch_records(
-    url: str, file: str | None = None, limit: int | None = 10, token: str | None = None
+    url: str, file: str | None = None, limit: int | None = 10, token: str | None = None, server_token: bool = True
 ) -> tuple[list[Any], str]:
     """The first ``limit`` records of a dataset file, and that file's path.
 
@@ -212,7 +219,7 @@ def fetch_records(
     if path is None and ref.path and ref.path.endswith(SUPPORTED_SUFFIXES):
         path = ref.path
     if path is None:
-        candidates = list_data_files(ref, token)
+        candidates = list_data_files(ref, token, server_token)
         if len(candidates) != 1:
             listed = ", ".join(candidates[:30]) + (" ..." if len(candidates) > 30 else "")
             raise ValueError(
@@ -220,7 +227,7 @@ def fetch_records(
                 + (f": {listed}" if candidates else " (only JSON / JSON Lines files are supported, not Parquet)")
             )
         path = candidates[0]
-    return list(iter_records(ref, path, token, limit)), path
+    return list(iter_records(ref, path, token, limit, server_token)), path
 
 
 def _record_name(record: Any, index: int) -> str:
