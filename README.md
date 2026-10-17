@@ -244,6 +244,32 @@ same section from everything kept; `GET /behavior/history` summarizes it;
 inputs and outputs on the server. On Railway, point `BEHAVIOR_DB` at a
 mounted volume, or history is lost on every deploy.
 
+### Compiled workflows
+
+Under **02 Repetition**, **Compiled workflows** (`report["workflow_compile"]`,
+`src/profiler/workflow.py`) groups runs by task first: runs whose step sets
+overlap by Jaccard ≥ 0.6 form one group, and groups under 3 runs are left
+out. Mixing tasks creates false ordering conflicts; grouping removes them.
+Next-step LLM calls are not steps. For each group it reports:
+
+- one step order (mean position of each step) and the remaining
+  **conflicts** (pairs seen in both orders) and **cycles**;
+- **branches**: two steps that never run together;
+- **parameters**: input fields that never change (hard-code) vs. ones that
+  do (template slots);
+- a **held-out** check: the order is learned from 4 of every 5 runs (groups
+  of 5+) and replayed on the 5th, as whole-run match and pair agreement.
+
+**Step order: ASP solver** (`order_resolver=asp` on `/analyze`) is optional.
+It needs `pip install -e ".[asp]"` (clingo). It finds the order that
+contradicts the fewest observed pairs (minimum feedback arc set, ≤15 steps,
+5 s limit) and shows it next to the simple order, with both evidence and
+held-out scores. It is used only when it contradicts less. Without clingo
+it falls back to simple, and `GET /health` reports `asp.available`.
+`data/order_conflicts_sample.jsonl` has a real cycle: the solver contradicts
+28 observations vs. 36, but it is no better on held-out runs (pairs 80% vs.
+83%). Fitting the training runs better is not the same as predicting better.
+
 ### POC: expected vs. found
 
 The dashboard's POC tab (`POST /poc/run`) checks how much data the profiler
@@ -270,6 +296,15 @@ across all the agents in the data at once. It takes the same inputs as
 (`hf_url`, `hf_limit`, `hf_token`). Its optional fields are `output_match` and
 `runs_per_month`. **Load demo data** generates the six mock agents
 (5,000 lines, seed 0) and analyzes them.
+
+Aggregate usage exports are detected automatically (JSON, JSON Lines or
+CSV, `src/ingest/usage.py` and `src/profiler/usage.py`). These are token
+counters per workload (`record_id`, `workload_id`, input / output /
+cache-read / cache-creation tokens), or agent/trigger activations. They have
+no steps, so the tab shows a usage report instead: cache-read share,
+workload concentration (top 1 / top 3, Herfindahl index), records ≥10× the
+median, and repeated agent/trigger pairs, with no $ figures. `/analyze`
+rejects them with a 422 that points to this tab.
 
 - **Avoidable spend is a minimum.** The findings are the same ones the report
   makes (scripted sequences, caches, rule bypasses, hidden state, regions).

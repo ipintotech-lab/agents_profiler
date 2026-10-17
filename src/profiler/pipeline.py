@@ -29,6 +29,7 @@ from .mine import mine, observe, recommend, score
 from .opportunities import build_summary
 from .patterns import decision_costs, find_repetition
 from .validation import validate
+from .workflow import compile_workflow
 
 
 def _serialize_bpop_result(result: BPOPResult) -> dict:
@@ -66,12 +67,15 @@ def run_pipeline(
     sensitivity_ratios: list[float] | None = None,
     token_prices: tuple[float, float] | None = None,
     output_match: str = "exact",
+    order_resolver: str = "simple",
 ) -> dict:
     """``token_prices`` -- $ per 1M input / output tokens -- opts in to
     estimating cost for LLM calls that have tokens but no recorded cost.
     ``output_match`` -- how the behavior section compares outputs (see
     ``behavior.OUTPUT_MATCHES``); the determinism classification always
-    compares them exactly."""
+    compares them exactly. ``order_resolver`` -- ``"simple"`` or ``"asp"``
+    -- how the compiled workflow orders conflicting steps (see
+    ``workflow.py``); ``"asp"`` needs the optional ``clingo`` package."""
     recorded = events
     estimated = None
     if token_prices is not None:
@@ -211,6 +215,7 @@ def run_pipeline(
         "repetition": repetition,
         "capacity_context": bpop_capacity_context,
         "behavior": build_behavior(events, selected_workflow, output_match),
+        "workflow_compile": compile_workflow(events, selected_workflow, order_resolver),
     }
 
     if has_expected(selected_workflow):

@@ -34,9 +34,17 @@ from bpop.result import BPOPResult
 from ingest import DEFAULT_DEMAND_MODEL, normalize_raw_json, parse_raw_text
 from ingest.huggingface import fetch_records, list_data_files, parse_hf_url
 from ingest.trace_schema import TraceEvent
-from profiler import history, run_pipeline, run_poc, run_sweep
+from ingest.usage import (
+    detect_kind,
+    normalize_activations,
+    normalize_usage,
+    parse_records,
+)
+from profiler import asp, history, run_pipeline, run_poc, run_sweep
 from profiler.behavior import OUTPUT_MATCHES, build_behavior
 from profiler.finops import build_finops
+from profiler.usage import build_aggregate
+from profiler.workflow import ORDER_RESOLVERS
 from rawdata_gen import (
     generate_configured,
     verify_seed_range_reproducibility,
@@ -130,7 +138,7 @@ def root() -> FileResponse:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "asp": asp.status()}
 
 
 def _parse_trace_events(raw: bytes, filename: str = "uploaded file") -> list[TraceEvent]:
@@ -142,7 +150,41 @@ def _parse_trace_events(raw: bytes, filename: str = "uploaded file") -> list[Tra
         rows = normalize_raw_json(parse_raw_text(stripped))
         return [TraceEvent.model_validate(row) for row in rows]
     except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+        rows = parse_records(stripped)
+        if rows and detect_kind(rows):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{filename} holds aggregate {detect_kind(rows)} records (no steps), which the pipeline "
+                "can't analyze -- upload it in the AI Agent FinOps tab for a usage report.",
+            ) from exc
         raise HTTPException(status_code=422, detail=f"could not parse {filename}: {exc}") from exc
+
+
+async def _read_aggregate(files: list[UploadFile]) -> dict | None:
+    """The aggregate report when every upload is an aggregate usage or
+    activation export (``ingest/usage.py``); ``None`` otherwise, with the
+    uploads rewound for the trace-event path."""
+    usage: list[dict] = []
+    activations: list[dict] = []
+    summaries: list[dict] = []
+    for upload in files:
+        raw = await upload.read()
+        await upload.seek(0)
+        try:
+            rows = parse_records(raw.decode("utf-8"))
+        except UnicodeDecodeError:
+            return None
+        kind = detect_kind(rows) if rows else None
+        if kind is None:
+            return None
+        name = upload.filename or f"file {len(summaries) + 1}"
+        try:
+            normalized = normalize_usage(rows) if kind == "usage" else normalize_activations(rows)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"could not parse {name}: {exc}") from exc
+        (usage if kind == "usage" else activations).extend(normalized)
+        summaries.append({"name": name, "kind": kind, "num_records": len(rows)})
+    return build_aggregate(usage, activations, summaries)
 
 
 # Records read from a Hugging Face dataset per request -- each record is a
@@ -229,6 +271,7 @@ async def analyze(
     price_output_per_mtok: float | None = Form(None),
     output_match: str = Form("exact"),
     keep_history: bool = Form(False),
+    order_resolver: str = Form("simple"),
 ) -> dict:
     """Run the uploaded trace file(s) through Observe -> Profile -> Mine ->
     Score -> Recommend for one workflow (auto-picked if not given).
@@ -258,9 +301,15 @@ async def analyze(
     (exact / decision / normalized). ``keep_history`` also adds the events
     to the behavior history (``GET /behavior``) -- opt-in, since it stores
     them on the server.
+
+    ``order_resolver`` (simple / asp) sets how the compiled workflow orders
+    conflicting steps; ``asp`` also reports the solver's order next to the
+    simple one, and falls back to simple when ``clingo`` isn't installed.
     """
     if output_match not in OUTPUT_MATCHES:
         raise HTTPException(status_code=400, detail=f"output_match must be one of {', '.join(OUTPUT_MATCHES)}")
+    if order_resolver not in ORDER_RESOLVERS:
+        raise HTTPException(status_code=400, detail=f"order_resolver must be one of {', '.join(ORDER_RESOLVERS)}")
     if (price_input_per_mtok is None) != (price_output_per_mtok is None):
         raise HTTPException(status_code=400, detail="give both token prices (input and output) or neither")
     token_prices = None
@@ -286,6 +335,7 @@ async def analyze(
             demand_model=demand_model,
             token_prices=token_prices,
             output_match=output_match,
+            order_resolver=order_resolver,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -348,11 +398,18 @@ async def finops(
     """AI Agent FinOps view of the uploaded traces (same inputs as
     ``/analyze``): spend across every workflow, avoidable spend as a lower
     bound, and opportunities with a heuristic risk. ``runs_per_month``
-    projects the $ figures from the observed cost per run."""
+    projects the $ figures from the observed cost per run.
+
+    Aggregate usage / activation exports (token counters per workload, no
+    steps) get a usage report instead, marked ``"kind": "aggregate"``."""
     if output_match not in OUTPUT_MATCHES:
         raise HTTPException(status_code=400, detail=f"output_match must be one of {', '.join(OUTPUT_MATCHES)}")
     if runs_per_month is not None and runs_per_month <= 0:
         raise HTTPException(status_code=400, detail="runs_per_month must be positive")
+    if file and not hf_url:
+        aggregate = await _read_aggregate(file)
+        if aggregate is not None:
+            return aggregate
     events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
     try:
         result = await run_in_threadpool(build_finops, events, output_match, runs_per_month)

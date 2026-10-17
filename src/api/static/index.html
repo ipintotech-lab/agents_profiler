@@ -235,7 +235,7 @@
         <p style="margin-top:10px"><b>What the report shows</b> (after "Run pipeline"):</p>
         <ul>
           <li><b>01 Summary</b> &mdash; where the money goes and what to change: each repeat worth fixing, the evidence, the observed saving and the fix (cache it, use a rule, script the steps).</li>
-          <li><b>02 Repetition</b> &mdash; the same steps in the same order across runs, and the same call with the same input.</li>
+          <li><b>02 Repetition</b> &mdash; the same steps in the same order across runs, the same call with the same input, and <b>compiled workflows</b>: one step order per task, checked on held-out runs. Set "Step order" to the ASP solver to compare its order with the simple one.</li>
           <li><b>03 Nodes</b> &mdash; every distinct operation, costliest first, and whether the same input ever gave a different result.</li>
           <li><b>04 Behavior</b> &mdash; per action: cost (typical and worst 5%), consistency, models and versions, which input field decides the answer, and <b>regions</b>: input values where a simple rule gives the answer while the rest needs the LLM. Tick "Keep these events in history" to add uploads up over time.</li>
           <li><b>05 Upload contents</b> &mdash; what was read: events, runs, workflows.</li>
@@ -330,7 +330,7 @@ hf auth login</pre>
         <p style="margin-top:10px"><b>What the report shows</b> (after "Run pipeline"):</p>
         <ul>
           <li><b>01 Summary</b> &mdash; where the money goes and what to change: each repeat worth fixing, the evidence, the observed saving and the fix (cache it, use a rule, script the steps).</li>
-          <li><b>02 Repetition</b> &mdash; the same steps in the same order across runs, and the same call with the same input.</li>
+          <li><b>02 Repetition</b> &mdash; the same steps in the same order across runs, the same call with the same input, and <b>compiled workflows</b>: one step order per task, checked on held-out runs. Set "Step order" to the ASP solver to compare its order with the simple one.</li>
           <li><b>03 Nodes</b> &mdash; every distinct operation, costliest first, and whether the same input ever gave a different result.</li>
           <li><b>04 Behavior</b> &mdash; per action: cost (typical and worst 5%), consistency, models and versions, which input field decides the answer, and <b>regions</b>: input values where a simple rule gives the answer while the rest needs the LLM. Tick "Keep these events in history" to add uploads up over time.</li>
           <li><b>05 Upload contents</b> &mdash; what was read: events, runs, workflows.</li>
@@ -505,7 +505,7 @@ hf auth login</pre>
         <summary>What this tab does, and what to expect</summary>
         <p>A <b>FinOps view of agent spend</b>: across every agent in the data, how much went to LLM and tool calls, how much of it these traces show was <b>avoidable</b>, and which savings are <b>safe to try first</b>. It uses the same evidence as the other tabs (repeated calls, repeated step chains, LLM choices a rule could make, regions), across all agents at once.</p>
         <ol>
-          <li><b>Pick the data</b>: click <b>Load demo data</b> (six mock agents, 5,000 trace lines), or choose JSON / JSON Lines files, or paste a Hugging Face dataset link.</li>
+          <li><b>Pick the data</b>: click <b>Load demo data</b> (six mock agents, 5,000 trace lines), or choose JSON / JSON Lines files, or paste a Hugging Face dataset link. Aggregate usage exports (token counters per workload, or agent/trigger activations; JSON, JSON Lines or CSV) get a usage report instead: concentration, cache-read share and outliers, with no $ figures.</li>
           <li><b>Optional: runs per month</b>. Traces carry no dates, so there is no "this month". Give your monthly run volume and every $ figure is also shown as a monthly projection (observed cost per run &times; runs).</li>
           <li>Click <b>Analyze spend</b>.</li>
         </ol>
@@ -518,7 +518,7 @@ hf auth login</pre>
         </div>
         <div class="field grow">
           <label for="finopsFile">Or trace file(s) (.json / .jsonl) <span class="hint">select several to analyze together</span></label>
-          <input type="file" id="finopsFile" accept=".json,.jsonl,application/json" multiple>
+          <input type="file" id="finopsFile" accept=".json,.jsonl,.csv,application/json,text/csv" multiple>
         </div>
       </div>
       <div class="row">
@@ -590,6 +590,14 @@ hf auth login</pre>
           <option value="normalized">normalized text (ignore case, numbers, ids)</option>
         </select>
       </div>
+      <div class="field">
+        <label for="orderResolver">Step order <span class="hint">for 02 Compiled workflows: how conflicting orders are settled</span></label>
+        <select id="orderResolver">
+          <option value="simple" selected>simple (mean position)</option>
+          <option value="asp">ASP solver, compare with simple (optional)</option>
+        </select>
+        <span class="hint" id="aspStatus"></span>
+      </div>
       <div class="field grow">
         <label>&nbsp;</label>
         <label class="check"><input type="checkbox" id="keepHistory"> Keep these events in history <span class="hint">stored on this server so 04 Behavior can add up every kept upload; off by default</span></label>
@@ -640,6 +648,15 @@ hf auth login</pre>
     <p class="takeaway" id="callTakeaway"></p>
     <p class="lede">Repeated calls: the same operation with the identical input. If every repeat gave the same output, each repeat after the first was redundant (a cache candidate).</p>
     <table id="callTable"><thead><tr><th>Operation</th><th>Input</th><th>User input</th><th class="num">Seen</th><th>Output</th><th class="num">Redundant</th></tr></thead><tbody></tbody></table>
+    <h3 style="font-family:var(--serif);font-weight:400;font-size:15px;margin:16px 0 4px;color:var(--ink)">Compiled workflows <span style="font-size:12px;color:var(--faint)">— one step order per task, checked on held-out runs</span></h3>
+    <p class="takeaway" id="wfTakeaway"></p>
+    <p class="lede">Runs grouped by task (the set of steps they use), then one step order per group, learned from 4 of every 5 runs and replayed against the 5th. <i>Held-out</i>: runs that contain every required step in the compiled order, and the share of step pairs that ran in that order. <i>Branch</i>: two steps that never run together (one or the other). <i>Conflict</i>: two steps seen in both orders. With <b>Step order: ASP solver</b> the solver's order is shown next to the simple one: it minimizes the observations the order contradicts. Click a group for its parameters.</p>
+    <div class="stats explained" id="wfStats"></div>
+    <table id="wfTable"><thead><tr><th>#</th><th class="num">runs</th><th>compiled order</th><th class="num">conflicts</th><th>branches</th><th class="num">held-out match · pairs</th><th>script</th></tr></thead><tbody></tbody></table>
+    <div id="wfDiff" hidden>
+      <p class="lede tablenote" id="wfDiffNote"></p>
+      <table id="wfDiffTable"><thead><tr><th>#</th><th>simple order</th><th>ASP order</th><th class="num">contradicted · simple / ASP</th><th class="num">held-out match · simple / ASP</th><th class="num">held-out pairs · simple / ASP</th><th>used</th></tr></thead><tbody></tbody></table>
+    </div>
 
     <h2><span class="idx">03</span>Nodes <span style="font-size:12px;color:var(--faint)">— every distinct operation, costliest first</span></h2>
     <p class="takeaway" id="mineTakeaway"></p>
@@ -784,6 +801,24 @@ hf auth login</pre>
     <ul class="lede" id="finopsLimits"></ul>
   </div>
 
+  <div id="aggReport" style="display:none">
+    <h2><span class="idx">01</span>Usage <span style="font-size:12px;color:var(--faint)">— aggregate export: token counters per workload, no steps</span></h2>
+    <p class="takeaway" id="aggTakeaway"></p>
+    <div class="stats explained" id="aggStats"></div>
+    <h2><span class="idx">02</span>Workloads <span style="font-size:12px;color:var(--faint)">— where the tokens go, largest first</span></h2>
+    <table id="aggWorkloads"><thead><tr><th>workload</th><th class="num">records</th><th class="num">tokens</th><th class="num">share</th><th class="num">cache-read share</th></tr></thead><tbody></tbody></table>
+    <h2><span class="idx">03</span>Outliers <span style="font-size:12px;color:var(--faint)">— records far above the typical one</span></h2>
+    <table id="aggOutliers"><thead><tr><th>record</th><th>workload</th><th class="num">tokens</th><th class="num">× median</th></tr></thead><tbody></tbody></table>
+    <div id="aggActSection">
+      <h2><span class="idx">04</span>Activations <span style="font-size:12px;color:var(--faint)">— the same agent started by the same trigger</span></h2>
+      <div class="stats explained" id="aggActStats"></div>
+      <table id="aggPairs"><thead><tr><th>agent</th><th>trigger</th><th class="num">activations</th></tr></thead><tbody></tbody></table>
+      <table id="aggFanout"><thead><tr><th>trigger</th><th class="num">agents it starts</th></tr></thead><tbody></tbody></table>
+    </div>
+    <h2><span class="idx">05</span>Limits</h2>
+    <ul class="lede" id="aggLimits"></ul>
+  </div>
+
   <div id="pocReport" style="display:none">
     <h2><span class="idx">01</span>Summary <span style="font-size:12px;color:var(--faint)">— how much data the profiler needs before its answers stop changing</span></h2>
     <p class="lede">This answers one question: <strong>how much synthetic trace data does the profiler actually need before its determinism calls stop changing?</strong> It is not looking for the sample size with the highest accuracy — it is looking for the <em>smallest</em> sample size beyond which feeding it more data stops meaningfully improving the result. Below that point, trust the numbers less; above it, more data is just cost with no added benefit.</p>
@@ -901,6 +936,7 @@ const pocReportEl = document.getElementById('pocReport');
 const tabFinops = document.getElementById('tabFinops');
 const finopsPanel = document.getElementById('finopsPanel');
 const finopsReportEl = document.getElementById('finopsReport');
+const aggReportEl = document.getElementById('aggReport');
 let lastFinops = null;
 let lastSweepResult = null;
 let lastPocResult = null;
@@ -936,7 +972,8 @@ function setMode(m) {
   reportEl.style.display = ownReport ? 'none' : (reportEl.dataset.hasRun ? 'block' : 'none');
   sweepReportEl.style.display = m === 'sweep' && lastSweepResult ? 'block' : 'none';
   pocReportEl.style.display = m === 'poc' && lastPocResult ? 'block' : 'none';
-  finopsReportEl.style.display = m === 'finops' && lastFinops ? 'block' : 'none';
+  finopsReportEl.style.display = m === 'finops' && lastFinops && lastFinops.kind !== 'aggregate' ? 'block' : 'none';
+  aggReportEl.style.display = m === 'finops' && lastFinops && lastFinops.kind === 'aggregate' ? 'block' : 'none';
   updateRunBtnState();
 }
 tabUpload.addEventListener('click', () => setMode('upload'));
@@ -1643,6 +1680,7 @@ form.addEventListener('submit', async (ev) => {
   if (dm !== '') fd.append('demand_model', dm);
   fd.append('output_match', document.getElementById('outputMatch').value);
   if (document.getElementById('keepHistory').checked) fd.append('keep_history', 'true');
+  fd.append('order_resolver', document.getElementById('orderResolver').value);
   if (tokenPrices) {
     fd.append('price_input_per_mtok', tokenPrices.input);
     fd.append('price_output_per_mtok', tokenPrices.output);
@@ -1830,15 +1868,132 @@ async function runFinops() {
     if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Analysis failed.');
     lastFinops = data;
     document.getElementById('finopsSource').innerHTML = `<span class="ok">Analyzed</span> ${source}`;
-    renderFinops(data);
-    finopsReportEl.style.display = 'block';
-    finopsReportEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const aggregate = data.kind === 'aggregate';
+    if (aggregate) renderAggregate(data); else renderFinops(data);
+    finopsReportEl.style.display = aggregate ? 'none' : 'block';
+    aggReportEl.style.display = aggregate ? 'block' : 'none';
+    (aggregate ? aggReportEl : finopsReportEl).scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
     showErr(e.message || String(e));
   } finally {
     btn.disabled = false;
     btn.textContent = 'Analyze spend';
   }
+}
+
+
+// --- 02 Compiled workflows (profiler/workflow.py) ---
+const pct0 = v => v == null ? '—' : Math.round(v * 100) + '%';
+const stepChain = order => order.map(st => `<span class="oc"><b>${esc(st)}</b></span>`).join('→ ');
+
+function aspStatusText(a) {
+  return a && a.available ? `clingo ${esc(a.version)} installed` : 'clingo not installed: ASP falls back to simple (pip install agents-profiler-bpop[asp])';
+}
+fetch('/health').then(r => r.json()).then(h => {
+  document.getElementById('aspStatus').textContent = aspStatusText(h.asp);
+}).catch(() => {});
+
+function renderCompiled(wc) {
+  const tbody = document.querySelector('#wfTable tbody');
+  if (!wc) { tbody.innerHTML = ''; return; }
+  const groups = wc.groups;
+  const matched = groups.filter(g => g.holdout && g.holdout.match_rate >= 0.9).length;
+  document.getElementById('wfTakeaway').innerHTML = groups.length
+    ? `${wc.runs} runs fall into <b>${wc.groups_found}</b> task group${wc.groups_found === 1 ? '' : 's'}. ` +
+      (wc.ungrouped.num_conflicts > wc.num_conflicts
+        ? `Grouping by task removed ${wc.ungrouped.num_conflicts - wc.num_conflicts} of ${wc.ungrouped.num_conflicts} ordering conflicts: they came from mixing tasks. `
+        : '') +
+      (wc.num_conflicts ? `<b>${wc.num_conflicts}</b> conflict${wc.num_conflicts === 1 ? '' : 's'} remain inside groups${wc.order_resolver === 'asp' ? '' : ': try Step order "ASP solver" to compare'}. ` : 'No step order conflicts inside any group. ') +
+      `${matched} of ${groups.length} compiled order${groups.length === 1 ? '' : 's'} match 90%+ of held-out runs.`
+    : `No task group has ${wc.settings.min_group_runs}+ runs yet, so nothing is compiled.`;
+  document.getElementById('wfStats').innerHTML =
+    statCardExplained(wc.groups_found, 'task groups', `runs with a similar set of steps (Jaccard ≥ ${wc.settings.group_similarity}); ${wc.runs_in_small_groups} run${wc.runs_in_small_groups === 1 ? '' : 's'} in groups under ${wc.settings.min_group_runs} runs are left out`) +
+    statCardExplained(`${wc.ungrouped.num_conflicts} → ${wc.num_conflicts}`, 'conflicts', 'step pairs seen in both orders: across the whole workflow, then inside task groups') +
+    statCardExplained(wc.ungrouped.cycles, 'order cycles, ungrouped', 'A before B, B before C, C before A by majority: no single order satisfies every run') +
+    statCardExplained(wc.order_resolver === 'asp' ? 'ASP' : 'simple', 'step order', wc.order_resolver === 'asp' ? aspStatusText(wc.asp) : 'mean position of each step in its runs');
+  tbody.innerHTML = groups.length ? groups.map(g => {
+    const h = g.holdout;
+    const params = Object.entries(g.parameters).map(([node, p]) => `<tr><td>${esc(node)}</td>
+      <td class="inp">${Object.entries(p.constant).map(([k, v]) => `<span class="k">${esc(k)}:</span> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}`).join('\n') || '<span class="k">—</span>'}</td>
+      <td class="inp">${Object.entries(p.variable).map(([k, n]) => `<span class="k">${esc(k)}</span> (${n} values)`).join('\n') || '<span class="k">—</span>'}</td></tr>`).join('');
+    return `<tr class="node-row">
+      <td>${g.group}</td>
+      <td class="num">${g.runs}</td>
+      <td>${stepChain(g.order)}${g.optional_steps.length ? `<div class="hint">sometimes: ${g.optional_steps.map(esc).join(', ')}</div>` : ''}</td>
+      <td class="num">${g.num_conflicts}${g.cycles.length ? ' <span class="pill nondet">cycle</span>' : ''}</td>
+      <td>${g.branches.map(b => `${esc(b[0])} <i>or</i> ${esc(b[1])}`).join('<br>') || '—'}</td>
+      <td class="num">${h ? `${h.matched_runs}/${h.holdout_runs} · ${pct0(h.pair_agreement)}` : '<span class="hint">under 5 runs</span>'}</td>
+      <td>${g.scriptable ? '<span class="pill det">fixed script</span>' : g.num_conflicts ? '<span class="pill nondet">order varies</span>' : '<span class="pill insuff">template</span>'}</td>
+    </tr>
+    <tr class="node-detail" hidden><td colspan="7">
+      <p class="lede">Example runs: ${g.run_ids.map(esc).join(', ')}. ${g.conflicts.length ? 'Conflicts: ' + g.conflicts.map(c => `${esc(c.first)} before ${esc(c.then)} in ${c.runs} runs, after it in ${c.reverse_runs}`).join('; ') + '.' : ''}
+      ${h && h.constant_param_accuracy != null ? ` Constant parameters right on held-out runs: ${pct0(h.constant_param_accuracy)} of ${h.constant_params_checked}.` : ''}</p>
+      <table><thead><tr><th>step</th><th>constant input (hard-code)</th><th>variable input (template slot)</th></tr></thead><tbody>${params}</tbody></table>
+    </td></tr>`;
+  }).join('') : '<tr><td colspan="7">No task group with enough runs.</td></tr>';
+  tbody.querySelectorAll('tr.node-row').forEach(row => row.addEventListener('click', () => {
+    row.classList.toggle('open');
+    row.nextElementSibling.hidden = !row.classList.contains('open');
+  }));
+
+  // Simple vs ASP, side by side
+  const withAsp = groups.filter(g => g.asp);
+  document.getElementById('wfDiff').hidden = wc.order_resolver !== 'asp';
+  if (wc.order_resolver !== 'asp') return;
+  const changed = withAsp.filter(g => g.diff && !g.diff.same_order).length;
+  document.getElementById('wfDiffNote').innerHTML = !wc.asp.available
+    ? `<b>Simple vs. ASP</b>: ${aspStatusText(wc.asp)}, so only the simple order is shown.`
+    : `<b>Simple vs. ASP</b>: the solver's order differs in ${changed} of ${withAsp.length} group${withAsp.length === 1 ? '' : 's'}. <i>Contradicted</i> is how many training observations (step A seen before B) the order goes against: the solver minimizes it, so it is never higher. The held-out columns check whether that also holds on runs neither order was built from.`;
+  document.querySelector('#wfDiffTable tbody').innerHTML = withAsp.map(g => {
+    const d = g.diff, a = g.asp;
+    if (!d) return `<tr><td>${g.group}</td><td>${stepChain(g.simple.order)}</td><td colspan="5"><span class="hint">${esc(a.status)}: ${esc(a.reason || '')}</span></td></tr>`;
+    const better = (x, y) => x < y ? 'good' : '';
+    return `<tr>
+      <td>${g.group}</td>
+      <td>${stepChain(g.simple.order)}</td>
+      <td>${d.same_order ? '<span class="hint">same order</span>' : stepChain(a.order)}${a.status === 'timeout' ? ' <span class="pill nondet">time limit</span>' : ''}</td>
+      <td class="num">${d.evidence_lost_simple} / <span class="${better(d.evidence_lost_asp, d.evidence_lost_simple)}">${d.evidence_lost_asp}</span></td>
+      <td class="num">${d.holdout_match_simple != null ? `${pct0(d.holdout_match_simple)} / ${pct0(d.holdout_match_asp)}` : '—'}</td>
+      <td class="num">${d.holdout_pairs_simple != null ? `${pct0(d.holdout_pairs_simple)} / ${pct0(d.holdout_pairs_asp)}` : '—'}</td>
+      <td>${g.chosen === 'asp' ? '<span class="pill derived">ASP</span>' : '<span class="pill observed">simple</span>'}</td>
+    </tr>`;
+  }).join('');
+}
+
+// --- FinOps tab: aggregate usage exports (profiler/usage.py) ---
+const tok = v => v >= 1e9 ? (v / 1e9).toFixed(2) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : String(v);
+function renderAggregate(agg) {
+  const u = agg.usage, a = agg.activations;
+  if (u) {
+    const top = u.by_workload[0];
+    document.getElementById('aggTakeaway').textContent =
+      `${pct0(u.cache_read_share)} of all ${tok(u.totals.all)} reported tokens are cache reads: most of the volume is re-reading context, so context size is the first lever. ` +
+      (top ? `${top.workload_id} alone has ${pct0(top.share)} of the tokens; the top 3 workloads ${pct0(u.concentration.top3_share)}.` : '');
+    document.getElementById('aggStats').innerHTML =
+      statCardExplained(tok(u.totals.all), 'reported tokens', `${u.records} records over ${u.workloads} workloads; counters, not money`) +
+      statCardExplained(pct0(u.cache_read_share), 'cache reads', `${tok(u.totals.cache_read_input_tokens)} cache-read tokens; ${tok(u.totals.non_cache_read)} input + output + cache creation`) +
+      statCardExplained(`${pct0(u.concentration.top1_share)} · ${pct0(u.concentration.top3_share)}`, 'top 1 · top 3 workloads', `share of all tokens; concentration index ${u.concentration.hhi} (1 = one workload has everything)`) +
+      statCardExplained(u.outliers.length, 'outlier records', `at least ${u.outlier_factor}× the median record (${tok(u.median_record_tokens)} tokens)`);
+    document.querySelector('#aggWorkloads tbody').innerHTML = u.by_workload.map(w => `<tr>
+      <td>${esc(w.workload_id)}</td><td class="num">${w.records}</td><td class="num">${tok(w.tokens)}</td>
+      <td class="num">${pct0(w.share)}</td><td class="num">${pct0(w.cache_read_share)}</td></tr>`).join('');
+    document.querySelector('#aggOutliers tbody').innerHTML = u.outliers.length ? u.outliers.map(o => `<tr>
+      <td>${esc(o.record_id)}</td><td>${esc(o.workload_id)}</td><td class="num">${tok(o.tokens)}</td><td class="num">${o.times_median}×</td></tr>`).join('')
+      : '<tr><td colspan="4">No record is 10× the median.</td></tr>';
+  } else {
+    document.getElementById('aggTakeaway').textContent = 'No usage records in this upload, only activations (section 04).';
+    ['aggStats'].forEach(id => { document.getElementById(id).innerHTML = ''; });
+    ['#aggWorkloads tbody', '#aggOutliers tbody'].forEach(q => { document.querySelector(q).innerHTML = ''; });
+  }
+  document.getElementById('aggActSection').hidden = !a;
+  if (a) {
+    document.getElementById('aggActStats').innerHTML =
+      statCardExplained(a.records, 'activations', `${a.agents} agents, ${a.triggers} triggers`) +
+      statCardExplained(`${a.activations_in_repeated_pairs} of ${a.records}`, 'in repeated pairs', `${a.repeated_pairs} agent/trigger pairs ran more than once: candidates for a full trace to see which steps repeat`);
+    document.querySelector('#aggPairs tbody').innerHTML = a.top_pairs.map(p => `<tr><td>${esc(p.agent_id)}</td><td>${esc(p.trigger_id)}</td><td class="num">${p.count}</td></tr>`).join('') || '<tr><td colspan="3">No pair repeats.</td></tr>';
+    document.querySelector('#aggFanout tbody').innerHTML = a.fan_out.map(f => `<tr><td>${esc(f.trigger_id)}</td><td class="num">${f.agents}</td></tr>`).join('');
+  }
+  document.getElementById('aggLimits').innerHTML = agg.limits.map(l => `<li>${esc(l)}</li>`).join('');
 }
 
 function riskPill(r) { return `<span class="risk ${r}">${r}</span>`; }
@@ -2183,6 +2338,7 @@ function render(data) {
     row.classList.toggle('open');
     row.nextElementSibling.hidden = !row.classList.contains('open');
   }));
+  renderCompiled(data.workflow_compile);
 
   // Score
   document.getElementById('scoreFormula').textContent = data.score.formula +
