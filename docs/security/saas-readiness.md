@@ -126,7 +126,7 @@ Design rules:
 
 | # | Item | This branch |
 |---|---|---|
-| 1 | Security headers: CSP (script hash), `frame-ancestors 'none'`, nosniff, referrer policy, HSTS | yes |
+| 1 | Security headers: CSP (script hash), `frame-ancestors 'none'`, nosniff, `Referrer-Policy: same-origin` (not `no-referrer`: browsers then send `Origin: null` on the page's own POSTs and the CSRF check refuses them), HSTS | yes |
 | 2 | Authentication: generic OIDC (authorization code + PKCE), server-side sessions, HttpOnly/Secure/SameSite cookie, CSRF origin check, logout | yes |
 | 3 | Tenant model: users, tenants, memberships, roles; principal derived from session | yes |
 | 4 | Tenant-scoped files, jobs, results; 404 across tenants | yes |
@@ -174,7 +174,11 @@ Small commits, each with its tests:
 5. `security: add tenant-scoped files API with quotas`
 6. `security: move file analysis to a sandboxed worker`
 7. `security: require auth on legacy routes in SaaS mode`
-8. `security: add cross-tenant and upload test suites` (tests also land with each step)
+8. `security: send same-origin referrer so the CSRF check sees the page's origin`
+   (found by signing in and out in a real browser)
+
+The cross-tenant and upload suites landed with steps 4–7 instead of as a
+separate commit.
 
 Modes (`AUTH_MODE`):
 
@@ -184,7 +188,48 @@ Modes (`AUTH_MODE`):
 - `dev`: local only. `/auth/dev-login` signs in as a test user. It refuses
   to start unless `APP_ORIGIN` is a localhost address.
 
-## 6. Needs infrastructure (not in the repo)
+## 6. Status of this branch
+
+Implemented and tested (`tests/test_saas_*.py`, `tests/test_security_headers.py`;
+full suite 338 passed, ruff clean):
+
+- Authentication: OIDC code + PKCE, state and nonce used once, server-side
+  sessions (`SESSION_TTL_S`, default 8 h), logout, CSRF origin check.
+- Tenant isolation: get, download, download links, delete, jobs,
+  re-analysis, results and behavior history all return 404 (or an empty
+  history) across tenants; a browser-supplied tenant id is ignored.
+- Upload security: path-traversal names (`../../etc/passwd`,
+  `..\..\file`), long and Unicode/bidi names, duplicates, zero-byte files,
+  fake extensions, Content-Type spoofing, archives and binaries by magic
+  bytes, oversize files, too many files, quotas, rate limit, one-time
+  60-second download links (expired and reused links rejected).
+- Worker sandbox: scrubbed environment, rlimits (memory, CPU, files,
+  writes), wall-clock timeout, no content in errors or logs.
+- Checked in Chrome against a local `AUTH_MODE=dev` server: the CSP allows
+  the page's one hashed script with no console violations; dev sign-in,
+  sign-out and the page's own POSTs pass the CSRF check; a non-admin gets
+  403 from `/generate`.
+
+Known gaps (P1):
+
+- In SaaS mode the original `/analyze` and `/finops` still parse uploads
+  in the web process (signed-in, size-limited, in a thread pool), not in
+  the sandbox. The page should move to `POST /api/files` + jobs; until it
+  does, treat those routes as trusted-user only.
+- The page has a sign-in bar but no files/jobs UI yet; the `/api` routes
+  are usable from scripts.
+- `/auth/dev-login` has no login-CSRF protection; it is localhost-only by
+  design.
+
+To try it locally:
+
+```bash
+AUTH_MODE=dev APP_ORIGIN=http://localhost:8000 SAAS_DB=/tmp/saas.sqlite \
+  STORAGE_DIR=/tmp/storage uvicorn api.main:app --app-dir src
+python -m saas.worker   # same env, another terminal
+```
+
+## 7. Needs infrastructure (not in the repo)
 
 - An OIDC provider (Auth0, Okta, Entra ID, Google Workspace, Keycloak…):
   `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, redirect URI
@@ -198,3 +243,7 @@ Modes (`AUTH_MODE`):
   worker can be its own service; until then the worker runs in the same
   container as a separate process.
 - ClamAV (`CLAMD_HOST`, `CLAMD_PORT`) for malware scanning.
+- The live Railway service still runs `AUTH_MODE=demo` (the `railway.json`
+  start command is unchanged). Switching it to `oidc` needs the provider
+  above, the volume variables, and the worker process started alongside
+  uvicorn; the Railway CLI login has to be run by hand.

@@ -453,6 +453,16 @@ start command; `requirements.txt` lists runtime deps directly, since
 Railpack's installer only recognizes `requirements.txt`/lockfiles, not a
 bare `pyproject.toml`).
 
+### Multi-tenant (SaaS) mode
+
+`AUTH_MODE` picks the mode: `demo` (default, the public demo above; not for
+customer data), `dev` (local test sign-in) or `oidc` (production). Outside
+demo mode, customer routes need a session, data is scoped per tenant,
+uploads go through `/api/files` (validated, quota-limited, private
+storage) and analyses run in a sandboxed worker (`python -m saas.worker`).
+What's done, what's left and what needs infrastructure:
+[`docs/security/saas-readiness.md`](docs/security/saas-readiness.md).
+
 ## Status (B-POP solver: Phase 1 / B-LP, per the B-POP proposal's own roadmap)
 
 Implements basic B-LP using PPOPT + PuLP, no AI in the core, validated against
