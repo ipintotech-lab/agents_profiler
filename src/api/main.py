@@ -54,6 +54,8 @@ from rawdata_gen.agents.common import to_jsonl
 from rawdata_gen.claude_code_sessions import generate_sessions
 from rawdata_gen.generate_traces import AGENT_GENERATORS, build_dataset_manifest
 from rawdata_gen.ground_truth import EXPECTED_FINDINGS
+from saas import auth
+from saas.config import get_settings
 from saas.headers import SecurityHeaders
 
 
@@ -88,6 +90,8 @@ app = FastAPI(
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.add_middleware(SecurityHeaders, page=_STATIC_DIR / "index.html")
+get_settings()  # fail at startup, not on the first request, if AUTH_MODE is misconfigured
+app.include_router(auth.router)
 
 
 def _capacity_allocation_demo_problem() -> BilevelProblem:
