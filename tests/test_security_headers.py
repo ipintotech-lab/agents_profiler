@@ -18,4 +18,4 @@ def test_page_scripts_are_pinned_by_hash_and_framing_is_denied():
 def test_api_responses_are_not_cached():
     res = TestClient(app).get("/health")
     assert res.headers["cache-control"] == "no-store"
-    assert res.headers["referrer-policy"] == "no-referrer"
+    assert res.headers["referrer-policy"] == "same-origin"

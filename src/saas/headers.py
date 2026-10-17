@@ -51,7 +51,10 @@ class SecurityHeaders:
             (b"content-security-policy", content_security_policy(page).encode()),
             (b"x-content-type-options", b"nosniff"),
             (b"x-frame-options", b"DENY"),
-            (b"referrer-policy", b"no-referrer"),
+            # not no-referrer: under it browsers send "Origin: null" on the
+            # page's own POSTs (forms and fetch), which the CSRF check refuses;
+            # same-origin still sends nothing to other sites
+            (b"referrer-policy", b"same-origin"),
             (b"strict-transport-security", b"max-age=31536000; includeSubDomains"),
             (b"cross-origin-opener-policy", b"same-origin"),
             (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
