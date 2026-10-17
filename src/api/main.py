@@ -167,9 +167,15 @@ async def _read_aggregate(files: list[UploadFile]) -> dict | None:
     usage: list[dict] = []
     activations: list[dict] = []
     summaries: list[dict] = []
+    seen_digests: dict[str, str] = {}
     for upload in files:
         raw = await upload.read()
         await upload.seek(0)
+        name = upload.filename or f"file {len(summaries) + 1}"
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest in seen_digests:
+            raise HTTPException(status_code=400, detail=f"{name} has the same content as {seen_digests[digest]}")
+        seen_digests[digest] = name
         try:
             rows = parse_records(raw.decode("utf-8"))
         except UnicodeDecodeError:
@@ -177,7 +183,6 @@ async def _read_aggregate(files: list[UploadFile]) -> dict | None:
         kind = detect_kind(rows) if rows else None
         if kind is None:
             return None
-        name = upload.filename or f"file {len(summaries) + 1}"
         try:
             normalized = normalize_usage(rows) if kind == "usage" else normalize_activations(rows)
         except ValueError as exc:

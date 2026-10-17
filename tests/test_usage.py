@@ -72,3 +72,14 @@ def test_negative_token_counter_is_rejected():
     body = json.dumps([_usage("r1", "w1", inp=-1)]).encode()
     res = client.post("/finops", files={"file": ("u.json", body, "application/json")})
     assert res.status_code == 422
+
+
+def test_duplicate_aggregate_upload_is_rejected():
+    client = TestClient(app)
+    body = "\n".join(json.dumps(r) for r in USAGE).encode()
+    files = [
+        ("file", ("a.jsonl", body, "application/x-ndjson")),
+        ("file", ("b.jsonl", body, "application/x-ndjson")),
+    ]
+    res = client.post("/finops", files=files)
+    assert res.status_code == 400 and res.json()["detail"] == "b.jsonl has the same content as a.jsonl"
