@@ -54,6 +54,7 @@ from rawdata_gen.agents.common import to_jsonl
 from rawdata_gen.claude_code_sessions import generate_sessions
 from rawdata_gen.generate_traces import AGENT_GENERATORS, build_dataset_manifest
 from rawdata_gen.ground_truth import EXPECTED_FINDINGS
+from saas.headers import SecurityHeaders
 
 
 class GenerateRequest(BaseModel):
@@ -86,6 +87,7 @@ app = FastAPI(
 )
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.add_middleware(SecurityHeaders, page=_STATIC_DIR / "index.html")
 
 
 def _capacity_allocation_demo_problem() -> BilevelProblem:
