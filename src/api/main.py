@@ -54,7 +54,7 @@ from rawdata_gen.agents.common import to_jsonl
 from rawdata_gen.claude_code_sessions import generate_sessions
 from rawdata_gen.generate_traces import AGENT_GENERATORS, build_dataset_manifest
 from rawdata_gen.ground_truth import EXPECTED_FINDINGS
-from saas import auth, files
+from saas import auth, files, jobs
 from saas.config import get_settings
 from saas.headers import SecurityHeaders
 from saas.limits import MULTIPART_OVERHEAD, BodySizeLimit
@@ -101,6 +101,7 @@ app.add_middleware(SecurityHeaders, page=_STATIC_DIR / "index.html")  # outermos
 get_settings()  # fail at startup, not on the first request, if AUTH_MODE is misconfigured
 app.include_router(auth.router)
 app.include_router(files.router)  # /api/*: 404 in demo mode (saas.auth.principal)
+app.include_router(jobs.router)
 
 
 def _capacity_allocation_demo_problem() -> BilevelProblem:
