@@ -58,6 +58,7 @@ class Run:
         cost: float = 0,
         result: str = "success",
         parent: str | None = None,
+        side_effects: bool | None = None,
     ) -> None:
         """Append one normalized profiler event; prompts/arguments are omitted."""
         event: dict[str, Any] = {
@@ -84,6 +85,8 @@ class Run:
             event["tool"] = {"name": tool}
         if model:
             event["model"] = model
+        if side_effects is not None:
+            event["has_side_effects"] = side_effects
         self.events.append(event)
 
 

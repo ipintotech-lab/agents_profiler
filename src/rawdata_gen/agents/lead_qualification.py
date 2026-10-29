@@ -37,12 +37,12 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
     tier = {"smb": "C", "mid_market": "B", "enterprise": "A"}[size]
 
     run.action(
-        "enrich_company", event_type="tool_call", state={"domain": domain}, tool="clearbit.enrich",
+        "enrich_company", event_type="tool_call", side_effects=False, state={"domain": domain}, tool="clearbit.enrich",
         latency_ms=jittered_int(rng, 250, 600, variance, floor=1), result=f"profile:{industry}:{size}:{region}",
         parent=parent,
     )
     run.action(
-        "check_crm_duplicate", event_type="tool_call", state={"lead_id": lead}, tool="crm.find_duplicates",
+        "check_crm_duplicate", event_type="tool_call", side_effects=False, state={"lead_id": lead}, tool="crm.find_duplicates",
         latency_ms=jittered_int(rng, 100, 250, variance, floor=1), result="no_duplicate", parent=parent,
     )
     run.action(
@@ -61,7 +61,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
         cost=round(jittered_uniform(rng, 0.003, 0.005, variance), 5), parent=parent,
     )
     run.action(
-        "assign_rep", event_type="tool_call", state={"region": region, "tier": tier}, tool="crm.round_robin_owner",
+        "assign_rep", event_type="tool_call", side_effects=False, state={"region": region, "tier": tier}, tool="crm.round_robin_owner",
         latency_ms=jittered_int(rng, 80, 150, variance, floor=1), result=f"rep:{region}-{tier}", parent=parent,
     )
     run.action(
@@ -72,11 +72,11 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
         cost=round(jittered_uniform(rng, 0.018, 0.03, variance), 5), parent=parent,
     )
     run.action(
-        "log_activity", event_type="tool_call", state={"lead_id": lead}, tool="crm.log_activity",
+        "log_activity", event_type="tool_call", side_effects=True, state={"lead_id": lead}, tool="crm.log_activity",
         latency_ms=jittered_int(rng, 60, 120, variance, floor=1), parent=parent,
     )
     run.action(
-        "schedule_followup", event_type="tool_call", state={"lead_id": lead}, tool="calendar.schedule_task",
+        "schedule_followup", event_type="tool_call", side_effects=True, state={"lead_id": lead}, tool="calendar.schedule_task",
         latency_ms=jittered_int(rng, 90, 180, variance, floor=1), parent=parent,
     )
     return [run]

@@ -42,7 +42,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
         cost=round(jittered_uniform(rng, 0.003, 0.006, variance), 5), parent=parent,
     )
     run.action(
-        "lookup_component_owner", event_type="tool_call", state={"cve_id": cve},
+        "lookup_component_owner", event_type="tool_call", side_effects=False, state={"cve_id": cve},
         tool="catalog.get_component_owner", latency_ms=jittered_int(rng, 100, 200, variance, floor=1), parent=parent,
     )
     component = f"service-{rng.randint(1, 50)}"
@@ -62,7 +62,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
         parent=parent,
     )
     run.action(
-        "create_or_update_ticket", event_type="tool_call", state={"issue_exists": issue_exists},
+        "create_or_update_ticket", event_type="tool_call", side_effects=True, state={"issue_exists": issue_exists},
         decision=("ticket_action", "update" if issue_exists else "create"), tool="jira.create_or_update",
         latency_ms=jittered_int(rng, 180, 260, variance, floor=1), parent=parent,
     )

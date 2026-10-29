@@ -20,7 +20,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
     parent = run.run_id
     state = {"deployment_id": deployment, "error_rate": error_rate}
     run.action(
-        "inspect_release_metrics", event_type="tool_call", state=state,
+        "inspect_release_metrics", event_type="tool_call", side_effects=False, state=state,
         tool="monitoring.get_release_metrics", latency_ms=jittered_int(rng, 150, 250, variance, floor=1),
         parent=parent,
     )
@@ -42,13 +42,13 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
         parent=parent,
     )
     run.action(
-        "apply_mitigation", event_type="tool_call",
+        "apply_mitigation", event_type="tool_call", side_effects=True,
         state={"deployment_id": deployment, "rollback_allowed": rollback_allowed},
         tool="release.apply_rollback" if rollback_allowed else "release.pause_rollout",
         latency_ms=jittered_int(rng, 300, 450, variance, floor=1), parent=parent,
     )
     run.action(
-        "notify_oncall", event_type="tool_call", state={"deployment_id": deployment},
+        "notify_oncall", event_type="tool_call", side_effects=True, state={"deployment_id": deployment},
         tool="messaging.notify_oncall", latency_ms=jittered_int(rng, 100, 180, variance, floor=1), parent=parent,
     )
     return [run]

@@ -39,6 +39,11 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "workflow_version": ("workflow_version", "workflowVersion"),
     "trigger": ("trigger", "triggered_by", "triggeredBy"),
     "user_input": ("user_input", "userInput", "user_prompt", "prompt"),
+    "has_side_effects": ("has_side_effects", "hasSideEffects", "side_effects", "sideEffects"),
+    "idempotent": ("idempotent", "isIdempotent"),
+    "cache_eligible": ("cache_eligible", "cacheEligible", "cacheable"),
+    "cache_ttl_seconds": ("cache_ttl_seconds", "cacheTtlSeconds", "ttl_seconds"),
+    "invalidation_keys": ("invalidation_keys", "invalidationKeys"),
 }
 
 _CONTAINER_KEYS = ("events", "data", "traces", "runs", "items", "results", "rows")

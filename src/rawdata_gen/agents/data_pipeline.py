@@ -33,18 +33,18 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
 
     def schema() -> None:
         run.action(
-            "get_table_schema", event_type="tool_call", state={"table": table}, tool="warehouse.describe_table",
+            "get_table_schema", event_type="tool_call", side_effects=False, state={"table": table}, tool="warehouse.describe_table",
             latency_ms=jittered_int(rng, 300, 800, variance, floor=1), result=f"schema:{table}:v3", parent=parent,
         )
 
     status = apply_noise(rng, "check_job_status", "failed", ["failed", "retrying", "succeeded"])
     run.action(
-        "check_job_status", event_type="tool_call", state={"job": job}, tool="scheduler.get_job_status",
+        "check_job_status", event_type="tool_call", side_effects=False, state={"job": job}, tool="scheduler.get_job_status",
         latency_ms=jittered_int(rng, 80, 160, variance, floor=1), result=f"status:{status}", parent=parent,
     )
     schema()
     run.action(
-        "fetch_error_log", event_type="tool_call", state={"job": job, "job_run": job_run}, tool="scheduler.get_logs",
+        "fetch_error_log", event_type="tool_call", side_effects=False, state={"job": job, "job_run": job_run}, tool="scheduler.get_logs",
         latency_ms=jittered_int(rng, 400, 900, variance, floor=1), result=f"log:{job_run}", parent=parent,
     )
     cause = apply_noise(rng, "diagnose_failure", _CAUSE_BY_ERROR[error], _ROOT_CAUSES)
@@ -64,13 +64,13 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
         cost=round(jittered_uniform(rng, 0.003, 0.005, variance), 5), parent=parent,
     )
     run.action(
-        "trigger_rerun" if error == "timeout" else "page_data_owner", event_type="tool_call",
+        "trigger_rerun" if error == "timeout" else "page_data_owner", event_type="tool_call", side_effects=True,
         state={"job": job, "job_run": job_run},
         tool="scheduler.rerun" if error == "timeout" else "pager.page_owner",
         latency_ms=jittered_int(rng, 150, 300, variance, floor=1), parent=parent,
     )
     run.action(
-        "post_incident_note", event_type="tool_call", state={"job_run": job_run}, tool="slack.post_message",
+        "post_incident_note", event_type="tool_call", side_effects=True, state={"job_run": job_run}, tool="slack.post_message",
         latency_ms=jittered_int(rng, 100, 200, variance, floor=1), parent=parent,
     )
     return [run]

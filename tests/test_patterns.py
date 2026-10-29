@@ -113,9 +113,11 @@ def test_has_side_effect_reads_the_operation_name():
     from profiler.opportunities import has_side_effect
 
     for name in ("create_or_update_ticket", "messaging.send_reply", "Edit", "Write",
-                 "str_replace_editor", "mcp__jira__createIssue", "log_activity"):
+                 "str_replace_editor", "mcp__jira__createIssue", "log_activity", "assign_rep", "assign_ticket",
+                 "sync_data", "refresh_cache", "process_payment", "set_state", "mark_done", "toggle_flag",
+                 "record_event", "track_click", "increment_counter", "handle_webhook"):
         assert has_side_effect(name), name
     for name in ("Read", "Grep", "fetch_error_log", "scheduler.get_logs", "get_table_schema",
-                 "search__web_search", "assign_rep", "check_job_status"):
+                 "search__web_search", "check_job_status"):
         assert not has_side_effect(name), name
 

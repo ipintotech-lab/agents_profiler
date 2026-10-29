@@ -38,18 +38,18 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
 
     plan("start", "fetch_diff")
     run.action(
-        "fetch_diff", event_type="tool_call", state={"repo": repo, "pr": pr}, tool="github.get_pull_request_diff",
+        "fetch_diff", event_type="tool_call", side_effects=False, state={"repo": repo, "pr": pr}, tool="github.get_pull_request_diff",
         latency_ms=jittered_int(rng, 200, 400, variance, floor=1), result=f"diff:{pr}", parent=parent,
     )
     plan("fetch_diff", "run_linter")
     run.action(
-        "run_linter", event_type="tool_call", state={"repo": repo, "pr": pr}, tool="ci.run_linter",
+        "run_linter", event_type="tool_call", side_effects=False, state={"repo": repo, "pr": pr}, tool="ci.run_linter",
         latency_ms=jittered_int(rng, 3000, 6000, variance, floor=1), result="lint:pass" if lint_ok else "lint:fail",
         parent=parent,
     )
     plan("run_linter", "run_tests")
     run.action(
-        "run_tests", event_type="tool_call", state={"repo": repo, "pr": pr}, tool="ci.run_tests",
+        "run_tests", event_type="tool_call", side_effects=False, state={"repo": repo, "pr": pr}, tool="ci.run_tests",
         latency_ms=jittered_int(rng, 20000, 60000, variance, floor=1), result="tests:pass" if tests_ok else "tests:fail",
         parent=parent,
     )
