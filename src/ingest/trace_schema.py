@@ -45,6 +45,10 @@ class TraceEvent(BaseModel):
     # prompt. Report context only: unique per run, so it stays out of both
     # ``input_state`` and the fingerprint.
     user_input: str | None = None
+    # False: input_state is only part of what the action saw (e.g. an LLM
+    # call that also saw a whole conversation), so different outputs for the
+    # same input_state aren't evidence of hidden state. None = not declared.
+    input_complete: bool | None = None
     # What the agent's author declares about the operation. None = not
     # declared, which is never read as "no side effects".
     has_side_effects: bool | None = None

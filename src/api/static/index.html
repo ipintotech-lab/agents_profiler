@@ -860,7 +860,7 @@ hf auth login</pre>
     <p class="hint" id="finopsActionsMore"></p>
 
     <h2><span class="idx">05</span>Recommendations <span style="font-size:12px;color:var(--faint)">— every finding, by how safe it is to act on</span></h2>
-    <p class="lede"><b>Low observational risk</b>: plenty of evidence and a low-risk kind of change (reuse a result that looks read-only by name, a choice that never varied) &mdash; still not replay-verified. <b>Needs review</b>: thin evidence, or the change replaces an LLM decision or a step that writes something. <b>Investigate first</b>: the action gives different results for the same input, so fix that before automating it. <b>Replay-verified</b> stays empty until replay against past calls is built. A $ shown in grey overlaps a larger finding and isn't in the headline.</p>
+    <p class="lede"><b>Low observational risk</b>: plenty of evidence and a low-risk kind of change (reuse a result declared read-only, script steps all declared free of side effects, a choice that never varied) &mdash; still not replay-verified. <b>Needs review</b>: thin evidence, side effects not declared, or the change replaces an LLM decision or a step that writes something. <b>Investigate first</b>: the action gives different results for the same input, so fix that before automating it. <b>Replay-verified</b> stays empty until replay against past calls is built. A $ shown in grey overlaps a larger finding and isn't in the headline.</p>
     <div class="fo-board" id="finopsBoard"></div>
 
     <h2><span class="idx">06</span>Model mix <span style="font-size:12px;color:var(--faint)">— LLM spend per model</span></h2>

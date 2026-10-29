@@ -10,7 +10,8 @@ A transcript is a log of many record types (``user``, ``assistant``,
   records are grouped by that id. Emitted as ``event_type="decision"``
   with ``node="llm_call ← <tool>"`` (what the model was reacting to: the
   user prompt or a tool's result), ``input_state={"trigger": ...}`` (the
-  exact operation, e.g. ``Bash: git status (error)``) and
+  exact operation, e.g. ``Bash: git status (error)``),
+  ``input_complete=False`` (the model also saw the whole conversation) and
   ``decision.selected`` = the tools it chose to call next, or ``"respond"``.
 * **Tool call** -- one per ``tool_use`` block, paired with its
   ``tool_result`` by ``tool_use_id``. ``node`` is the tool plus the
@@ -57,6 +58,8 @@ _COSMETIC_TOOL_ARGS = {"Bash": ("description",)}
 # Programs whose first sub-command is what identifies the operation
 # (``git status`` vs ``git push``), not the program alone.
 _SUBCOMMAND_PROGRAMS = {"git", "gh", "railway", "npm", "pnpm", "yarn", "docker", "kubectl", "uv", "pip", "cargo", "go", "make"}
+_SCRIPT_RUNNERS = {"node", "bash", "sh", "zsh", "ruby", "perl"}
+_SCRIPT_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".sh", ".rb", ".pl"}
 
 
 def bash_operation(command: str) -> str:
@@ -79,8 +82,14 @@ def bash_operation(command: str) -> str:
         rest = [t for t in tokens[1:] if not t.startswith("-")]
         if program.startswith("python") and len(tokens) > 2 and tokens[1] == "-m":
             return f"python -m {tokens[2]}"
-        if program.startswith("python"):
-            return "python"
+        if program.startswith("python") or program in _SCRIPT_RUNNERS:
+            # "python" alone names no operation: tell scripts apart by file
+            # and inline code (-c, heredocs) by a hash of the command
+            runner = "python" if program.startswith("python") else program
+            script = next((t for t in rest if PurePosixPath(t).suffix in _SCRIPT_SUFFIXES), None)
+            if script:
+                return f"{runner} {PurePosixPath(script).name}"
+            return f"{runner} inline:{hashlib.sha256(command.encode()).hexdigest()[:8]}"
         if program in _SUBCOMMAND_PROGRAMS and rest:
             return f"{program} {rest[0]}"
         return program
@@ -272,6 +281,8 @@ def convert_claude_code_transcript(rows: list[dict]) -> list[dict]:
                 "node": f"llm_call ← {trigger.split(' + ')[0].split(':')[0].removesuffix(' (error)')}",
                 "model": model,
                 "input_state": {"trigger": trigger},
+                # the model also saw the whole conversation, which isn't here
+                "input_complete": False,
                 "trigger": trigger,
                 "_tools": [],
                 "_start_ms": previous_ms,

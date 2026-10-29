@@ -71,6 +71,8 @@ def _sequence_opportunities(sequences: list[dict], signals: dict[str, dict]) -> 
             "evidence": f"{p['occurrences']}× in {p['runs']} runs · {p['llm_calls_between_steps']} LLM calls between steps",
             "nodes": list(p["steps"]),
             "changing_steps": [n for n in p["steps"] if signals[n]["changes_something"]],
+            # not declared either way: no write-sounding name isn't "reads only"
+            "undeclared_steps": [n for n in p["steps"] if signals[n]["changes_something"] is None],
             "observations": p["occurrences"],
             "saving": p["cost_between_steps"],
             "observed_cost": p["sequence_cost"],
@@ -174,7 +176,7 @@ def _cache_opportunities(calls: list[dict], signals: dict[str, dict]) -> list[di
 
 
 def _fingerprint_opportunities(
-    stats: list[ActionStats], llm_nodes: set[tuple[str, str]], signals: dict[str, dict]
+    stats: list[ActionStats], llm_nodes: set[tuple[str, str]], signals: dict[str, dict], partial_input: set[str]
 ) -> list[dict]:
     found = []
     for s in stats:
@@ -184,7 +186,9 @@ def _fingerprint_opportunities(
         # changes for the same input is just reading a world that changed.
         if not fp or (s.agent, s.node) not in llm_nodes:
             continue
-        if fp["variance"].get("factor") == "unexplained":
+        # when the trace records only part of the input, "same input" isn't
+        # the same input, so the variance doesn't point at hidden state
+        if fp["variance"].get("factor") == "unexplained" and s.node not in partial_input:
             found.append(
                 {
                     "type": "REVIEW_HIDDEN_STATE",
@@ -243,6 +247,7 @@ def find_opportunities(
     steps change something."""
     relevant = [e for e in events if e.workflow == workflow]
     llm_nodes = {(e.agent, e.node) for e in relevant if e.model}
+    partial_input = {e.node for e in relevant if e.input_complete is False}
     tool_names: dict[str, set[str]] = {}
     for e in relevant:
         if e.tool is not None:
@@ -255,7 +260,7 @@ def find_opportunities(
     opportunities = (
         _sequence_opportunities(repetition["sequences"], signals)
         + _cache_opportunities(repetition["calls"], signals)
-        + _fingerprint_opportunities(stats, llm_nodes, signals)
+        + _fingerprint_opportunities(stats, llm_nodes, signals, partial_input)
     )
     opportunities.sort(key=lambda o: (o["saving"] is None, -(o["saving"] or 0), -o["observed_cost"]))
     return opportunities

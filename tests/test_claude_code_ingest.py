@@ -59,6 +59,7 @@ def test_claude_code_transcript_converts_to_llm_and_tool_events():
     first, second = llm
     assert first.node == "llm_call ← user_prompt"
     assert first.input_state == {"trigger": "user_prompt"}
+    assert first.input_complete is False  # the model also saw the conversation
     assert first.decision.selected == "Bash: ls"
     assert first.latency_ms == pytest.approx(2000)
     assert second.node == "llm_call ← Bash"
@@ -133,6 +134,8 @@ def test_analyze_endpoint_names_the_bad_file_in_parse_errors():
     [
         ("Bash", {"command": "cd /x && .venv/bin/python -m pytest -q"}, "Bash: python -m pytest"),
         ("Bash", {"command": "PYTHONPATH=src git push origin main"}, "Bash: git push"),
+        ("Bash", {"command": "cd /x && python3 -I scripts/report.py --out a"}, "Bash: python report.py"),
+        ("Bash", {"command": "bash deploy.sh prod"}, "Bash: bash deploy.sh"),
         ("Read", {"file_path": "/repo/src/api/main.py"}, "Read: .py"),
         ("Edit", {"file_path": "/repo/Makefile", "old_string": "a", "new_string": "b"}, "Edit: Makefile"),
         ("mcp__chrome__computer", {"action": "screenshot", "tabId": 1}, "mcp__chrome__computer: screenshot"),
@@ -141,6 +144,16 @@ def test_analyze_endpoint_names_the_bad_file_in_parse_errors():
 )
 def test_tool_operation_names_the_operation_inside_the_call(name, tool_input, expected):
     assert tool_operation(name, tool_input) == expected
+
+
+def test_inline_code_is_told_apart_by_its_hash():
+    def op(command):
+        return tool_operation("Bash", {"command": command})
+
+    a, b = op('python3 -c "print(1)"'), op('python3 -c "print(2)"')
+    assert a.startswith("Bash: python inline:") and a != b
+    assert op('python3 -c "print(1)"') == a  # the same code repeated still matches
+    assert op("python3 - <<'EOF'\nprint(1)\nEOF").startswith("Bash: python inline:")
 
 
 def test_llm_latency_excludes_idle_time_before_a_turn_starts_without_a_user_record():
