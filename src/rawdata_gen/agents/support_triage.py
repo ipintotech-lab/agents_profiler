@@ -28,7 +28,7 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
         cost=round(jittered_uniform(rng, 0.0025, 0.0045, variance), 5), parent=parent,
     )
     run.action(
-        "fetch_customer_context", event_type="tool_call", state={"ticket_id": ticket},
+        "fetch_customer_context", event_type="tool_call", side_effects=False, state={"ticket_id": ticket},
         tool="crm.get_customer_context", latency_ms=jittered_int(rng, 120, 220, variance, floor=1), parent=parent,
     )
     run.action(
@@ -50,11 +50,11 @@ def generate(rng: random.Random | None = None, variance: str = "mid") -> list[Ru
         cost=round(jittered_uniform(rng, 0.005, 0.009, variance), 5), parent=parent,
     )
     run.action(
-        "update_ticket", event_type="tool_call", state={"ticket_id": ticket, "urgency": urgency},
+        "update_ticket", event_type="tool_call", side_effects=True, state={"ticket_id": ticket, "urgency": urgency},
         tool="helpdesk.update_ticket", latency_ms=jittered_int(rng, 150, 250, variance, floor=1), parent=parent,
     )
     run.action(
-        "send_acknowledgement", event_type="tool_call", state={"ticket_id": ticket},
+        "send_acknowledgement", event_type="tool_call", side_effects=True, state={"ticket_id": ticket},
         tool="messaging.send_reply", latency_ms=jittered_int(rng, 110, 190, variance, floor=1), parent=parent,
     )
     return [run]

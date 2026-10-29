@@ -45,3 +45,10 @@ class TraceEvent(BaseModel):
     # prompt. Report context only: unique per run, so it stays out of both
     # ``input_state`` and the fingerprint.
     user_input: str | None = None
+    # What the agent's author declares about the operation. None = not
+    # declared, which is never read as "no side effects".
+    has_side_effects: bool | None = None
+    idempotent: bool | None = None
+    cache_eligible: bool | None = None
+    cache_ttl_seconds: int | None = None
+    invalidation_keys: list[str] | None = None

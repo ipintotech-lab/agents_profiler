@@ -27,7 +27,7 @@ from ingest.trace_schema import TraceEvent
 
 from .behavior import build_behavior, region_rule_text
 from .mine import mine, observe, score
-from .opportunities import OPTIMIZATION_TYPES, find_opportunities, has_side_effect
+from .opportunities import OPTIMIZATION_TYPES, find_opportunities
 from .patterns import find_repetition, is_router_call
 
 REGION_TYPE = "DETERMINISTIC_REGION"
@@ -98,9 +98,12 @@ def _assess_kind(o: dict) -> tuple[str, list[str]]:
     if kind == "REVIEW_HIDDEN_STATE":
         return "high", ["results change for the same input: fix the cause before automating anything"]
     if kind == "CACHE_RESULT":
-        # side-effecting calls are never suggested for caching
+        # calls declared (or named) as changing something are never suggested
+        effects = o["side_effects"]
+        if effects["has_side_effects"] is not False and effects["cache_eligible"] is not True:
+            return "medium", [f"identical input and output {n} times", "side effects not declared"]
         if n >= MODERATE_EVIDENCE:
-            return "low", [f"identical input and output {n} times", "read-only by name"]
+            return "low", [f"identical input and output {n} times", "declared free of side effects"]
         return "medium", [f"only {n} identical calls seen"]
     if kind == "CONDITIONAL_LLM_BYPASS":
         if n >= 2 * MODERATE_EVIDENCE:
@@ -112,11 +115,11 @@ def _assess_kind(o: dict) -> tuple[str, list[str]]:
         return "medium", [f"{n} calls in the slice", "replaces an LLM decision on part of its inputs"]
     # EXTRACT_DETERMINISTIC_SUBSTEP
     reasons = []
-    if any(has_side_effect(s) for s in o["nodes"]):
+    if o["changing_steps"]:
         reasons.append("the script must repeat steps that change something")
     if n < 2 * MODERATE_EVIDENCE:
         reasons.append(f"sequence seen {n} times")
-    return ("medium", reasons) if reasons else ("low", [f"sequence seen {n} times", "no step changes anything by name"])
+    return ("medium", reasons) if reasons else ("low", [f"sequence seen {n} times", "no step declared or named as changing anything"])
 
 
 def _scope(o: dict) -> tuple:
