@@ -167,6 +167,69 @@ def select_non_overlapping(opportunities: list[dict]) -> list[dict]:
     return taken
 
 
+def group_findings(opportunities: list[dict]) -> None:
+    """Number each finding's group. Findings of one kind in one workflow
+    that share a step are one opportunity seen from different sides (two
+    chains through ``Bash: sed``): a finding joins the first group, by
+    candidate cost, whose lead shares a step with it. Sharing only the
+    routing LLM calls doesn't count -- every sequence does -- so a group is
+    narrower than the overlap rule that keeps $ counted once."""
+    leads: list[dict] = []
+    for o in opportunities:  # sorted by saving: the largest leads
+        lead = next(
+            (i for i, t in enumerate(leads)
+             if (t["workflow"], t["type"]) == (o["workflow"], o["type"]) and set(t["nodes"]) & set(o["nodes"])),
+            None,
+        )
+        if lead is None:
+            lead = len(leads)
+            leads.append(o)
+        o["group"] = lead
+
+
+# What to do with a group's lead finding, most urgent first: the queue says
+# what evidence to collect, never "apply this".
+NEXT_STEPS = {
+    "investigate": "Find out why this action gives different results for the same input before automating it.",
+    "declare": "Say which of these steps change something (Tell us about the agent), then analyze again.",
+    "review": "Check the reasons below against the agent's code before trying the change.",
+    "replay": "Run the change against past calls to check it gives the same results.",
+}
+
+
+def next_steps(opportunities: list[dict], limit: int = 3) -> list[dict]:
+    """The top ``limit`` groups to act on, by candidate cost, keeping one
+    place for an action to investigate when there is one."""
+    leads = {}
+    for o in opportunities:  # sorted by saving: the first of a group leads it
+        leads.setdefault(o["group"], o)
+    ranked = sorted(leads.values(), key=lambda o: -(o["saving"] or 0))
+    queue = ranked[:limit]
+    urgent = next((o for o in ranked if o["risk"] == "high"), None)
+    if urgent and urgent not in queue:
+        queue = [*queue[: limit - 1], urgent]
+
+    def step(o: dict) -> str:
+        if o["risk"] == "high":
+            return "investigate"
+        if "side effects not declared" in o["risk_reasons"]:
+            return "declare"
+        return "review" if o["risk"] == "medium" else "replay"
+
+    return [
+        {
+            "step": step(o),
+            "do": NEXT_STEPS[step(o)],
+            "group": o["group"],
+            "related": sum(1 for x in opportunities if x["group"] == o["group"]) - 1,
+            **{k: o[k] for k in ("type", "title", "workflow", "saving", "risk", "risk_reasons", "observations")},
+            "where": o.get("where"),
+            "requires_approval": o.get("requires_approval", False),
+        }
+        for o in queue
+    ]
+
+
 def _coverage(events: list[TraceEvent]) -> dict:
     llm = [e for e in events if e.model]
     keys = Counter((e.workflow, e.node, json.dumps(e.input_state, sort_keys=True, default=str)) for e in events)
@@ -284,6 +347,9 @@ def build_finops(
                         for r in n["regions"]
                     ],
                     "hidden_state": any(o["type"] == "REVIEW_HIDDEN_STATE" and n["node"] in o["nodes"] for o in found),
+                    # False: the trace holds only part of the input, so the
+                    # consistency rate doesn't compare like with like
+                    "input_recorded": all(e.input_complete is not False for e in relevant if e.node == n["node"]),
                     "best": (
                         {k: best[k] for k in ("type", "action", "saving", "risk", "evidence_strength")} if best else None
                     ),
@@ -303,6 +369,7 @@ def build_finops(
     workflows.sort(key=lambda w: -w["avoidable"])
     avoidable = sum(o["saving"] for o in selected)
     opportunities.sort(key=lambda o: (o["saving"] is None, -(o["saving"] or 0)))
+    group_findings(opportunities)
     actions.sort(key=lambda a: -a["cost"]["total"])
 
     risk_totals = {
@@ -327,6 +394,7 @@ def build_finops(
             "calls": len(events),
             "opportunities": len(opportunities),
             "counted_opportunities": len(selected),
+            "groups": len({o["group"] for o in opportunities}),
         },
         "projection": (
             {
@@ -343,6 +411,7 @@ def build_finops(
         "coverage": _coverage(events),
         "workflows": workflows,
         "top_waste": selected[:TOP_WASTE],
+        "next_steps": next_steps(opportunities),
         "actions": actions[:TOP_ACTIONS],
         "num_actions": len(actions),
         "opportunities": opportunities,
@@ -358,9 +427,10 @@ def build_finops(
             {**context.model_dump(), "hidden_by_context": hidden_by_context} if context else None
         ),
         "notes": (
-            "Avoidable spend is the observed cost of calls an opportunity would have removed, each action "
-            "counted once: a lower bound, not a forecast. Risk is a heuristic from evidence size and the kind "
-            "of change; nothing here has been replayed against past calls yet, so no finding is verified safe "
-            "to deploy."
+            "Candidate cost (\"avoidable\") is the observed cost of calls the findings could remove, each "
+            "action counted once. It is not a savings forecast: it assumes a replacement removes these calls "
+            "without changing outcomes, and replay and replacement overhead aren't measured. Risk is a "
+            "heuristic from evidence size and the kind of change; nothing here has been replayed against "
+            "past calls yet, so no finding is verified safe to deploy."
         ),
     }
