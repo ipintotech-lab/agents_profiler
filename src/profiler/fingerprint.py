@@ -38,6 +38,7 @@ from enum import Enum
 from ingest.trace_schema import TraceEvent
 
 from .determinism import _display_value, _outcome_key
+from .identity import action_identity, action_type, describe
 
 FINGERPRINT_SCHEMA_VERSION = 1
 """Bump whenever the fields that take part in a fingerprint change: it's part
@@ -130,14 +131,6 @@ class ActionContext:
 
 def _is_router(event: TraceEvent) -> bool:
     return event.decision is not None and event.decision.type == ROUTER_DECISION_TYPE
-
-
-def action_type(event: TraceEvent) -> str:
-    if event.decision is not None:
-        return event.decision.type
-    if event.tool is not None:
-        return event.tool.name
-    return event.event_type
 
 
 def reconstruct_contexts(events: list[TraceEvent]) -> dict[int, ActionContext]:
@@ -342,10 +335,25 @@ def _representatives(events: list[TraceEvent]) -> list[dict]:
     return reps
 
 
+def _configs(events: list[TraceEvent], is_llm: bool) -> list[dict]:
+    """A business group split by action identity (model, workflow version):
+    what a rule may replace is the calls of one configuration, not a mix."""
+    by: dict[object, list[TraceEvent]] = defaultdict(list)
+    for e in events:
+        by[action_identity(e)].append(e)
+    rows = [
+        {"identity": describe(identity, is_llm), **calculate_group_statistics(group)}
+        for identity, group in by.items()
+    ]
+    return sorted(rows, key=lambda r: -r["observations"])
+
+
 def fingerprint_node(events: list[TraceEvent], contexts: dict[int, ActionContext]) -> dict:
     """Fingerprint evidence for one (agent, node): per-level summaries, the
     variance explanation, and the business-level groups organized by
-    starting point (trigger), each with how it splits at the deeper levels."""
+    starting point (trigger), each with how it splits at the deeper levels
+    and by configuration (``configs``)."""
+    is_llm = any(e.model for e in events)
     cache: dict[tuple[int, FingerprintLevel], ActionFingerprint] = {}
     by_level = {lvl: group_by_fingerprint(events, contexts, lvl, cache) for lvl in LEVELS}
     levels = {lvl.value: _level_summary(groups) for lvl, groups in by_level.items()}
@@ -366,6 +374,7 @@ def fingerprint_node(events: list[TraceEvent], contexts: dict[int, ActionContext
                 "input": {k: _short(v) for k, v in fp.business_input.items()},
                 **calculate_group_statistics(group.events),
                 "splits": splits,
+                "configs": _configs(group.events, is_llm),
                 "representatives": _representatives(group.events),
             }
         )

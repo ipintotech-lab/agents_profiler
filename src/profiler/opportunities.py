@@ -37,8 +37,8 @@ WRITE_VERBS = frozenset({"log", "page", "notify", "trigger", "schedule", "apply"
 # Plain-language meaning of each optimization type, shown next to the name.
 OPTIMIZATION_TYPES = {
     "EXTRACT_DETERMINISTIC_SUBSTEP": "The same steps run in the same order again and again. Turning them into one script removes the LLM calls that pick each next step.",
-    "CACHE_RESULT": "The same operation ran with the identical input and gave the same output every time. Reusing the first result skips the repeats. Operations whose name says they change something (create, update, send, edit...) are never suggested.",
-    "CONDITIONAL_LLM_BYPASS": "An LLM call made the same choice every time it saw the same starting point and input. A rule could make that choice without calling the model.",
+    "CACHE_RESULT": "The same operation ran with the identical input, model and version and gave the same output every time. Reusing the first result skips the repeats. Operations whose name says they change something (create, update, send, edit...) are never suggested.",
+    "CONDITIONAL_LLM_BYPASS": "An LLM call made the same choice every time it saw the same starting point and input, on the same model and version. A rule could make that choice without calling the model.",
     "REVIEW_HIDDEN_STATE": "The same request gave different results even with identical context and configuration, so something the traces don't record is changing the outcome.",
 }
 
@@ -96,6 +96,7 @@ def _cache_opportunities(calls: list[dict], names: dict[str, set[str]]) -> list[
             "type": "CACHE_RESULT",
             "title": c["node"],
             "input": c["input"],
+            "identity": c["identity"],
             "action": "Reuse the first result, or skip the repeat",
             "evidence": f"{c['count']}× with identical input, same output every time · {c['redundant_calls']} repeats",
             "nodes": [c["node"]],
@@ -131,23 +132,31 @@ def _fingerprint_opportunities(stats: list[ActionStats], llm_nodes: set[tuple[st
                     "observed_cost": s.avg_cost * s.occurrences,
                 }
             )
+        # One configuration at a time: the same choice across two models is
+        # two observations of different actions, not one rule.
         for g in fp["groups"]:
-            if g["verdict"] != "consistent" or g["observations"] < MIN_BYPASS_OBSERVATIONS or g["avg_cost"] <= 0:
-                continue
-            found.append(
-                {
-                    "type": "CONDITIONAL_LLM_BYPASS",
-                    "title": s.node,
-                    "input": g["input"],
-                    "trigger": g["trigger"],
-                    "action": f"Replace the LLM call with a rule that returns {g['dominant_output']}",
-                    "evidence": f"same choice {g['observations']} of {g['observations']} times after {g['trigger']}",
-                    "nodes": [s.node],
-                    "observations": g["observations"],
-                    "saving": g["avg_cost"] * (g["observations"] - 1),
-                    "observed_cost": g["total_cost"],
-                }
-            )
+            for c in g["configs"]:
+                if c["verdict"] != "consistent" or c["observations"] < MIN_BYPASS_OBSERVATIONS or c["avg_cost"] <= 0:
+                    continue
+                identity = c["identity"]
+                found.append(
+                    {
+                        "type": "CONDITIONAL_LLM_BYPASS",
+                        "title": s.node,
+                        "input": g["input"],
+                        "trigger": g["trigger"],
+                        "identity": identity,
+                        "action": f"Replace the LLM call with a rule that returns {c['dominant_output']}",
+                        "evidence": (
+                            f"same choice {c['observations']} of {c['observations']} times after {g['trigger']} "
+                            f"on model {identity['model']}, version {identity['workflow_version']}"
+                        ),
+                        "nodes": [s.node],
+                        "observations": c["observations"],
+                        "saving": c["avg_cost"] * (c["observations"] - 1),
+                        "observed_cost": c["total_cost"],
+                    }
+                )
     return found
 
 
