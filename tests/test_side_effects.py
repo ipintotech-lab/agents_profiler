@@ -76,3 +76,38 @@ def test_rule_bypass_is_not_suggested_for_a_call_declared_to_change_something():
 
     assert len(bypass([llm(f"r{i}") for i in range(6)])) == 1
     assert bypass([llm(f"r{i}", has_side_effects=True) for i in range(6)]) == []
+
+
+def _llm(run_id, selected, **fields):
+    return TraceEvent(
+        trace_id="t", run_id=run_id, workflow="wf", agent="a", event_type="decision", node="llm_call",
+        decision={"type": "next_action", "selected": selected}, input_state={"trigger": "user_prompt"},
+        model="m1", workflow_version="v1", cost=0.02, **fields,
+    )
+
+
+def test_a_sequence_with_undeclared_steps_is_never_low_risk():
+    def chain(**declared):
+        events = []
+        for i in range(24):
+            events += [_llm(f"r{i}", "fetch"), _tool(f"r{i}", node="fetch", **declared),
+                       _llm(f"r{i}", "parse"), _tool(f"r{i}", node="parse", **declared)]
+        (seq,) = [o for o in _opportunities(events) if o["type"] == "EXTRACT_DETERMINISTIC_SUBSTEP"]
+        return assess(seq)
+
+    risk, reasons = chain()
+    assert risk == "medium" and "side effects not declared" in reasons
+    assert chain(has_side_effects=False)[0] == "low"
+
+
+def test_varying_outputs_on_a_partly_recorded_input_are_not_hidden_state():
+    def found(**fields):
+        events = [_llm(f"r{i}", ["a", "b"][i % 2], **fields) for i in range(20)]
+        stats = score(mine(events, "wf"))
+        hidden = [o for o in _opportunities(events) if o["type"] == "REVIEW_HIDDEN_STATE"]
+        return stats[0].classification.value, hidden
+
+    classification, hidden = found()
+    assert classification == "NON_DETERMINISTIC" and hidden
+    classification, hidden = found(input_complete=False)
+    assert classification == "INSUFFICIENT_EVIDENCE" and hidden == []

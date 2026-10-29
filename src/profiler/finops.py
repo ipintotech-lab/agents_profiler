@@ -119,9 +119,11 @@ def _assess_kind(o: dict) -> tuple[str, list[str]]:
     reasons = []
     if o["changing_steps"]:
         reasons.append("the script must repeat steps that change something")
+    if o["undeclared_steps"]:
+        reasons.append("side effects not declared")
     if n < 2 * MODERATE_EVIDENCE:
         reasons.append(f"sequence seen {n} times")
-    return ("medium", reasons) if reasons else ("low", [f"sequence seen {n} times", "no step declared or named as changing anything"])
+    return ("medium", reasons) if reasons else ("low", [f"sequence seen {n} times", "every step declared free of side effects"])
 
 
 def apply_context(o: dict, context: WorkflowContext | None) -> None:

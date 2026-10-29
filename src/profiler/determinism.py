@@ -166,7 +166,13 @@ def classify(
     )
     distinct_outcomes = [f"{sel or '-'}/{res or '-'}" for sel, res in distinct_outcome_tuples]
 
-    if conflicting_inputs > 0:
+    if conflicting_inputs > 0 and any(e.input_complete is False for e in events):
+        classification = Classification.INSUFFICIENT_EVIDENCE
+        reason = (
+            f"{conflicting_inputs} repeated input(s) produced more than one outcome, but the traces record "
+            "only part of what this action saw -- the inputs may not really be identical."
+        )
+    elif conflicting_inputs > 0:
         classification = Classification.NON_DETERMINISTIC
         reason = (
             f"{conflicting_inputs} repeated identical input(s) produced more than one "
