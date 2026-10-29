@@ -19,7 +19,7 @@ from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from bpop import (
@@ -33,6 +33,7 @@ from bpop import (
 from bpop.result import BPOPResult
 from ingest import DEFAULT_DEMAND_MODEL, normalize_raw_json, parse_raw_text
 from ingest.huggingface import fetch_records, list_data_files, parse_hf_url
+from ingest.preflight import NO_EVENTS, describe_empty, summary_line
 from ingest.trace_schema import TraceEvent
 from ingest.usage import (
     detect_kind,
@@ -143,23 +144,44 @@ def health() -> dict:
     return {"status": "ok", "asp": asp.status()}
 
 
-def _parse_trace_events(raw: bytes, filename: str = "uploaded file") -> list[TraceEvent]:
+class UploadError(Exception):
+    """An upload the API can't analyze: ``detail`` for people, ``code`` for
+    clients, and -- when the file parsed but held no events -- a
+    ``preflight`` per file saying what it did hold."""
+
+    def __init__(self, status_code: int, detail: str, code: str, preflight: list[dict] | None = None):
+        self.status_code, self.detail, self.code, self.preflight = status_code, detail, code, preflight
+
+
+@app.exception_handler(UploadError)
+async def _upload_error(_request, exc: UploadError) -> JSONResponse:
+    body = {"detail": exc.detail, "code": exc.code}
+    if exc.preflight is not None:
+        body["preflight"] = exc.preflight
+    return JSONResponse(status_code=exc.status_code, content=body)
+
+
+def _parse_trace_events(raw: bytes, filename: str = "uploaded file") -> tuple[list[TraceEvent], dict | None]:
+    """The file's events, and when there are none, what the file held."""
     text = raw.decode("utf-8")
     stripped = text.strip()
     if not stripped:
-        raise HTTPException(status_code=400, detail=f"{filename} is empty")
+        raise UploadError(400, f"{filename} is empty", "empty_file")
     try:
-        rows = normalize_raw_json(parse_raw_text(stripped))
-        return [TraceEvent.model_validate(row) for row in rows]
+        parsed = parse_raw_text(stripped)
+        events = [TraceEvent.model_validate(row) for row in normalize_raw_json(parsed)]
     except (json.JSONDecodeError, ValidationError, ValueError) as exc:
         rows = parse_records(stripped)
         if rows and detect_kind(rows):
-            raise HTTPException(
-                status_code=422,
-                detail=f"{filename} holds aggregate {detect_kind(rows)} records (no steps), which the pipeline "
+            raise UploadError(
+                422,
+                f"{filename} holds aggregate {detect_kind(rows)} records (no steps), which the pipeline "
                 "can't analyze -- upload it in the AI Agent FinOps tab for a usage report.",
+                "aggregate_records",
             ) from exc
-        raise HTTPException(status_code=422, detail=f"could not parse {filename}: {exc}") from exc
+        code = "invalid_format" if isinstance(exc, json.JSONDecodeError) else "unsupported_schema"
+        raise UploadError(422, f"could not parse {filename}: {exc}", code) from exc
+    return events, (None if events else describe_empty(parsed))
 
 
 async def _read_aggregate(files: list[UploadFile]) -> dict | None:
@@ -241,9 +263,9 @@ async def _load_events(
         if digest in seen_digests:
             raise HTTPException(status_code=400, detail=f"{name} has the same content as {seen_digests[digest]}")
         seen_digests[digest] = name
-        file_events = _parse_trace_events(raw, name)
+        file_events, preflight = _parse_trace_events(raw, name)
         events.extend(file_events)
-        file_summaries.append({"name": name, "num_events": len(file_events)})
+        file_summaries.append({"name": name, "num_events": len(file_events)} | ({"preflight": preflight} if preflight else {}))
     if hf_url:
         if not 1 <= hf_limit <= HF_MAX_LIMIT:
             raise HTTPException(status_code=400, detail=f"hf_limit must be between 1 and {HF_MAX_LIMIT}")
@@ -257,7 +279,22 @@ async def _load_events(
         except (ValidationError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=f"could not parse {name}: {exc}") from exc
         events.extend(hf_events)
-        file_summaries.append({"name": name, "num_events": len(hf_events), "num_records": len(records)})
+        file_summaries.append(
+            {"name": name, "num_events": len(hf_events), "num_records": len(records)}
+            | ({} if hf_events else {"preflight": describe_empty(records)})
+        )
+    if not events:
+        # parsed fine but nothing to analyze: say what the files held
+        # rather than letting the pipeline report "no workflow found"
+        empty = [{"name": f["name"], **f["preflight"]} for f in file_summaries]
+        statuses = {f["status"] for f in empty}
+        raise UploadError(
+            422,
+            "; ".join(summary_line(f["name"], f) for f in empty)
+            + " -- nothing to analyze. " + empty[0]["next_actions"][0],
+            statuses.pop() if len(statuses) == 1 else NO_EVENTS,
+            empty,
+        )
     return events, file_summaries
 
 

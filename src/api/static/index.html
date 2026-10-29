@@ -1941,7 +1941,9 @@ async function runFinops() {
     const data = await res.json();
     if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Analysis failed.');
     lastFinops = data;
-    document.getElementById('finopsSource').innerHTML = `<span class="ok">Analyzed</span> ${source}`;
+    const skipped = (data.files || []).filter(f => f.preflight).map(f => esc(f.name));
+    document.getElementById('finopsSource').innerHTML = `<span class="ok">Analyzed</span> ${source}` +
+      (skipped.length ? ` <span class="hint">&middot; no LLM or tool calls in ${skipped.join(', ')}, so ${skipped.length === 1 ? 'it adds' : 'they add'} nothing</span>` : '');
     const aggregate = data.kind === 'aggregate';
     if (aggregate) renderAggregate(data); else renderFinops(data);
     finopsReportEl.style.display = aggregate ? 'none' : 'block';
