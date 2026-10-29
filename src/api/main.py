@@ -43,6 +43,7 @@ from ingest.usage import (
 from profiler import asp, history, run_pipeline, run_poc, run_sweep
 from profiler.behavior import OUTPUT_MATCHES, build_behavior
 from profiler.finops import build_finops
+from profiler.pipeline import MODES
 from profiler.usage import build_aggregate
 from profiler.workflow import ORDER_RESOLVERS
 from rawdata_gen import (
@@ -277,6 +278,7 @@ async def analyze(
     output_match: str = Form("exact"),
     keep_history: bool = Form(False),
     order_resolver: str = Form("simple"),
+    mode: str = Form("full"),
 ) -> dict:
     """Run the uploaded trace file(s) through Observe -> Profile -> Mine ->
     Score -> Recommend for one workflow (auto-picked if not given).
@@ -310,11 +312,17 @@ async def analyze(
     ``order_resolver`` (simple / asp) sets how the compiled workflow orders
     conflicting steps; ``asp`` also reports the solver's order next to the
     simple one, and falls back to simple when ``clingo`` isn't installed.
+
+    ``mode`` (full / diagnose): ``diagnose`` returns only what the traces
+    show -- no opportunities and no per-node advice. Optimization findings
+    come from ``/finops``; none of them are replay-verified.
     """
     if output_match not in OUTPUT_MATCHES:
         raise HTTPException(status_code=400, detail=f"output_match must be one of {', '.join(OUTPUT_MATCHES)}")
     if order_resolver not in ORDER_RESOLVERS:
         raise HTTPException(status_code=400, detail=f"order_resolver must be one of {', '.join(ORDER_RESOLVERS)}")
+    if mode not in MODES:
+        raise HTTPException(status_code=400, detail=f"mode must be one of {', '.join(MODES)}")
     if (price_input_per_mtok is None) != (price_output_per_mtok is None):
         raise HTTPException(status_code=400, detail="give both token prices (input and output) or neither")
     token_prices = None
@@ -341,6 +349,7 @@ async def analyze(
             token_prices=token_prices,
             output_match=output_match,
             order_resolver=order_resolver,
+            mode=mode,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

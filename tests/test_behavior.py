@@ -134,4 +134,7 @@ def test_api_keeps_history_only_when_asked(tmp_path, monkeypatch):
     assert kept["num_events"] == 4 and kept["history"]["total"] == 4
     assert client.get("/behavior", params={"where": "k"}).status_code == 400
     assert client.post("/analyze", files=files, data={"output_match": "fuzzy"}).status_code == 400
+    assert client.post("/analyze", files=files, data={"mode": "optimize"}).status_code == 400
+    diagnosis = client.post("/analyze", files=files, data={"mode": "diagnose"}).json()
+    assert diagnosis["mode"] == "diagnose" and "recommend" not in diagnosis
     assert client.delete("/behavior/history").json()["deleted"] == 4

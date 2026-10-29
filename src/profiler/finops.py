@@ -1,5 +1,7 @@
 """AI Agent FinOps view: spend across every workflow in the data, how much
-of it these traces show to be avoidable, and which savings are safe to try.
+of it these traces show to be avoidable, and which savings carry low
+observational risk. Nothing is replay-verified yet, so nothing is called
+safe or ready.
 
 Built from the same evidence as the report (opportunities, behavior
 regions), across all workflows instead of one. Three rules keep the
@@ -40,13 +42,16 @@ MODERATE_EVIDENCE = 10
 TOP_ACTIONS = 15
 TOP_WASTE = 5
 
-# The status column of the recommendations board, by risk.
-STATUS_BY_RISK = {"low": "ready", "medium": "review", "high": "investigate"}
-STATUS_LABELS = {
-    "ready": "Ready to try",
-    "review": "Needs review",
-    "investigate": "Investigate first",
+# The columns of the recommendations board, by observational risk. Every
+# opportunity's status stays "opportunity_detected" until replay exists.
+RISK_LABELS = {
+    "low": "Low observational risk — not replay-verified",
+    "medium": "Needs review",
+    "high": "Investigate first",
 }
+STATUS = "opportunity_detected"
+# Deprecated names of the risk columns, kept one release for old callers.
+LEGACY_STATUS_BY_RISK = {"low": "ready", "medium": "review", "high": "investigate"}
 
 
 def _region_opportunities(behavior: dict) -> list[dict]:
@@ -190,7 +195,7 @@ def build_finops(events: list[TraceEvent], output_match: str = "exact", runs_per
                 risk=risk,
                 risk_reasons=reasons,
                 evidence_strength=evidence_strength(o["observations"]),
-                status=STATUS_BY_RISK[risk],
+                status=STATUS,
                 validation="not replayed",
             )
         # results that change for the same input make reusing a result or
@@ -199,7 +204,7 @@ def build_finops(events: list[TraceEvent], output_match: str = "exact", runs_per
         hidden = {n for o in found if o["type"] == "REVIEW_HIDDEN_STATE" for n in o["nodes"]}
         for o in found:
             if o["type"] in ("CACHE_RESULT", "CONDITIONAL_LLM_BYPASS") and hidden & set(o["nodes"]):
-                o.update(risk="high", status="investigate")
+                o["risk"] = "high"
                 o["risk_reasons"] = ["the same action gives different results for the same input elsewhere", *o["risk_reasons"]]
         opportunities += found
         spend = sum(e.cost for e in relevant)
@@ -252,20 +257,22 @@ def build_finops(events: list[TraceEvent], output_match: str = "exact", runs_per
     opportunities.sort(key=lambda o: (o["saving"] is None, -(o["saving"] or 0)))
     actions.sort(key=lambda a: -a["cost"]["total"])
 
-    status_totals = {
-        s: {
-            "count": sum(1 for o in opportunities if o["status"] == s),
-            "saving": round(sum(o["saving"] or 0 for o in opportunities if o["status"] == s and o["counted"]), 6),
+    risk_totals = {
+        r: {
+            "count": sum(1 for o in opportunities if o["risk"] == r),
+            "saving": round(sum(o["saving"] or 0 for o in opportunities if o["risk"] == r and o["counted"]), 6),
         }
-        for s in STATUS_LABELS
+        for r in RISK_LABELS
     }
+    low_risk_saving = risk_totals["low"]["saving"]
     return {
         "overview": {
             "spend": round(total_spend, 6),
             "llm_spend": round(sum(e.cost for e in events if e.model), 6),
             "avoidable": round(avoidable, 6),
             "avoidable_share": round(avoidable / total_spend, 4) if total_spend else None,
-            "ready_saving": status_totals["ready"]["saving"],
+            "low_risk_saving": low_risk_saving,
+            "ready_saving": low_risk_saving,  # deprecated alias of low_risk_saving
             "workflows": len(workflows),
             "agents": len({e.agent for e in events if e.agent}),
             "runs": total_runs,
@@ -279,7 +286,8 @@ def build_finops(events: list[TraceEvent], output_match: str = "exact", runs_per
                 "factor": round(factor, 6),
                 "spend": round(total_spend * factor, 2),
                 "avoidable": round(avoidable * factor, 2),
-                "ready_saving": round(status_totals["ready"]["saving"] * factor, 2),
+                "low_risk_saving": round(low_risk_saving * factor, 2),
+                "ready_saving": round(low_risk_saving * factor, 2),  # deprecated alias
             }
             if factor
             else None
@@ -290,14 +298,18 @@ def build_finops(events: list[TraceEvent], output_match: str = "exact", runs_per
         "actions": actions[:TOP_ACTIONS],
         "num_actions": len(actions),
         "opportunities": opportunities,
-        "status_totals": status_totals,
-        "status_labels": STATUS_LABELS,
+        "risk_totals": risk_totals,
+        "risk_labels": RISK_LABELS,
+        # deprecated: risk_totals under the old ready / review / investigate names
+        "status_totals": {LEGACY_STATUS_BY_RISK[r]: t for r, t in risk_totals.items()},
+        "deprecated": ["overview.ready_saving", "projection.ready_saving", "status_totals"],
         "models": _model_mix(events),
         "types": TYPES,
         "output_match": output_match,
         "notes": (
             "Avoidable spend is the observed cost of calls an opportunity would have removed, each action "
             "counted once: a lower bound, not a forecast. Risk is a heuristic from evidence size and the kind "
-            "of change; nothing here has been replayed against past calls yet."
+            "of change; nothing here has been replayed against past calls yet, so no finding is verified safe "
+            "to deploy."
         ),
     }

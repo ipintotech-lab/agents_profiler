@@ -791,7 +791,7 @@ hf auth login</pre>
     <p class="hint" id="finopsActionsMore"></p>
 
     <h2><span class="idx">05</span>Recommendations <span style="font-size:12px;color:var(--faint)">— every finding, by how safe it is to act on</span></h2>
-    <p class="lede"><b>Ready to try</b>: plenty of evidence and a low-risk change (reuse a read-only result, a choice that never varied). <b>Needs review</b>: thin evidence, or the change replaces an LLM decision or a step that writes something. <b>Investigate first</b>: the action gives different results for the same input, so fix that before automating it. <b>Replay-verified</b> stays empty until replay against past calls is built. A $ shown in grey overlaps a larger finding and isn't in the headline.</p>
+    <p class="lede"><b>Low observational risk</b>: plenty of evidence and a low-risk kind of change (reuse a result that looks read-only by name, a choice that never varied) &mdash; still not replay-verified. <b>Needs review</b>: thin evidence, or the change replaces an LLM decision or a step that writes something. <b>Investigate first</b>: the action gives different results for the same input, so fix that before automating it. <b>Replay-verified</b> stays empty until replay against past calls is built. A $ shown in grey overlaps a larger finding and isn't in the headline.</p>
     <div class="fo-board" id="finopsBoard"></div>
 
     <h2><span class="idx">06</span>Model mix <span style="font-size:12px;color:var(--faint)">— LLM spend per model</span></h2>
@@ -1733,7 +1733,7 @@ function nodeMeaning(n) {
   if (n.regions.length) return `predictable only when ${n.regions.map(r => esc(r.where)).join(' or ')}: use a rule there, the LLM elsewhere`;
   if (n.deciding_field) return `answer follows <code>${esc(n.deciding_field)}</code>: a lookup table could replace it${n.is_llm ? ' and the LLM call' : ''}`;
   if (c == null) return 'no input seen twice yet: needs more data to judge';
-  if (c >= 0.95) return n.is_llm ? 'same input → same answer: cache it or script it' : 'same input → same answer: safe to cache if it has no side effect';
+  if (c >= 0.95) return n.is_llm ? 'same input → same answer: a cache or script candidate, not replay-verified' : 'same input → same answer: a cache candidate, once replay confirms it and it has no side effect';
   if (c >= 0.8) return 'mostly consistent: something not in the inputs changes the answer sometimes';
   return n.is_llm ? 'answers vary for the same input: keep the LLM' : 'results vary for the same input: depends on outside state';
 }
@@ -2011,13 +2011,13 @@ function renderFinops(f) {
     : 'No cost is recorded in these traces, so spend and savings show as $0. The findings below still say what repeats.';
   const top = f.top_waste[0];
   document.getElementById('finopsTakeaway').textContent = top
-    ? `Biggest single saving: ${OPPORTUNITY_LABELS[top.type] || top.type} on ${top.title}${top.where ? ` when ${top.where}` : ''} (${top.workflow}), ${usd(top.saving)} observed, risk ${top.risk}. ${usd(o.ready_saving)} of the avoidable spend is ready to try now.`
+    ? `Biggest single saving: ${OPPORTUNITY_LABELS[top.type] || top.type} on ${top.title}${top.where ? ` when ${top.where}` : ''} (${top.workflow}), ${usd(top.saving)} observed, risk ${top.risk}. ${usd(o.low_risk_saving)} of the avoidable spend has low observational risk (not replay-verified).`
     : 'No avoidable spend found: nothing repeated often enough to act on. Larger traces usually show more.';
   document.getElementById('finopsStats').innerHTML =
     statCardExplained(usd(o.spend), 'agent spend', `observed in ${o.calls.toLocaleString()} calls over ${o.runs} runs of ${o.workflows} workflow${o.workflows === 1 ? '' : 's'}; ${usd(f.overview.llm_spend)} of it on LLM calls.${monthly(o.spend)}`) +
     statCardExplained(`${usd(o.avoidable)} <span style="font-size:14px">(${pctOf(o.avoidable, o.spend)})</span>`, 'avoidable, at least', `the cost of observed calls ${o.counted_opportunities} non-overlapping findings would have removed. A minimum: overlapping and unproven savings are left out.${monthly(o.avoidable)}`) +
-    statCardExplained(usd(o.ready_saving), 'ready to try', `the part of the avoidable spend whose findings have plenty of evidence and a low-risk change.${monthly(o.ready_saving)}`) +
-    statCardExplained(o.opportunities, 'findings', `${f.status_totals.ready.count} ready, ${f.status_totals.review.count} need review, ${f.status_totals.investigate.count} to investigate first (section 05).`) +
+    statCardExplained(usd(o.low_risk_saving), 'low observational risk', `the part of the avoidable spend whose findings have plenty of evidence and a low-risk kind of change. Not replay-verified.${monthly(o.low_risk_saving)}`) +
+    statCardExplained(o.opportunities, 'findings', `${f.risk_totals.low.count} low observational risk, ${f.risk_totals.medium.count} need review, ${f.risk_totals.high.count} to investigate first (section 05).`) +
     statCardExplained(`${pctOf(c.llm_calls_with_cost, c.llm_calls)} · ${pctOf(c.calls_with_repeated_input, c.calls)}`, 'data coverage', `LLM calls with a recorded cost · calls whose input was seen more than once. Savings can only be measured on calls with cost, and most findings need repeated inputs.`) +
     (p ? statCardExplained(usd(p.spend), 'monthly projection', `spend at ${Number(p.runs_per_month).toLocaleString()} runs a month, from the observed cost per run (${p.factor.toFixed(1)}× this data). Assumes the same mix of agents.`) : '');
   document.getElementById('finopsNotes').textContent = f.notes;
@@ -2056,13 +2056,13 @@ function renderFinops(f) {
   document.getElementById('finopsActionsMore').textContent = f.num_actions > f.actions.length
     ? `Showing the ${f.actions.length} costliest of ${f.num_actions} actions.` : '';
 
-  const cols = [...Object.entries(f.status_labels), ['verified', 'Replay-verified']];
+  const cols = [...Object.entries(f.risk_labels), ['verified', 'Replay-verified']];
   document.getElementById('finopsBoard').innerHTML = cols.map(([key, label]) => {
-    const items = f.opportunities.filter(x => x.status === key);
+    const items = key === 'verified' ? [] : f.opportunities.filter(x => x.risk === key);
     const shown = items.slice(0, 8);
     const sum = key === 'verified'
       ? 'Replay against past calls is not built yet: nothing is verified.'
-      : `${items.length} finding${items.length === 1 ? '' : 's'}${f.status_totals[key] ? ` · ${usd(f.status_totals[key].saving)} counted` : ''}`;
+      : `${items.length} finding${items.length === 1 ? '' : 's'}${f.risk_totals[key] ? ` · ${usd(f.risk_totals[key].saving)} counted` : ''}`;
     return `<div class="fo-col"><h3>${esc(label)}</h3><div class="colsum">${sum}</div>${shown.map(x => `
       <div class="fo-card">
         ${riskPill(x.risk)} <span>${esc(OPPORTUNITY_LABELS[x.type] || x.type)}</span>

@@ -55,7 +55,7 @@ def test_enough_consistent_repeats_clears_thresholds_to_deterministic():
 
 def test_default_thresholds_require_many_distinct_repeated_inputs():
     # Only 2 distinct inputs, each repeated many times -- still short of
-    # the default MIN_REPEATED_INPUTS=10, so this must not be called
+    # the default MIN_REPEATED_INPUTS=3, so this must not be called
     # deterministic even though repeat_coverage and observation count
     # are both high.
     events = [_event(input_state={"k": "a"}, run_id=f"a{i}") for i in range(50)]

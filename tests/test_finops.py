@@ -37,11 +37,11 @@ def test_regions_are_findings_and_not_overlapping_each_other(demo):
         assert not _overlaps(regions[0], regions[1])  # different slices remove different calls
 
 
-def test_traps_are_never_ready(demo):
+def test_traps_are_never_low_risk(demo):
     _, f = demo
     traps = {(wf, t["type"], t["node"]) for wf, rows in EXPECTED_FINDINGS.items() for t in rows if not t["expect"]}
     for o in f["opportunities"]:
-        if o["status"] == "ready":
+        if o["risk"] == "low":
             assert all((o["workflow"], o["type"], n) not in traps for n in o["nodes"]), o
 
 
@@ -52,7 +52,25 @@ def test_hidden_state_actions_are_not_safe_to_cache(demo):
         hidden = {n for o in found if o["type"] == "REVIEW_HIDDEN_STATE" for n in o["nodes"]}
         for o in found:
             if o["type"] in ("CACHE_RESULT", "CONDITIONAL_LLM_BYPASS") and hidden & set(o["nodes"]):
-                assert o["risk"] == "high" and o["status"] == "investigate"
+                assert o["risk"] == "high"
+
+
+def test_nothing_is_called_ready_or_safe_without_replay(demo):
+    _, f = demo
+    assert f["opportunities"]
+    for o in f["opportunities"]:
+        assert o["status"] == "opportunity_detected" and o["validation"] == "not replayed"
+    text = json.dumps({k: v for k, v in f.items() if k not in ("status_totals", "deprecated")}).lower()
+    for phrase in ("ready to try", "safe to cache", '"ready"'):
+        assert phrase not in text
+
+
+def test_deprecated_ready_keys_alias_low_risk(demo):
+    _, f = demo
+    assert f["overview"]["ready_saving"] == f["overview"]["low_risk_saving"]
+    assert f["projection"]["ready_saving"] == f["projection"]["low_risk_saving"]
+    assert f["status_totals"]["ready"] == f["risk_totals"]["low"]
+    assert f["status_totals"]["investigate"] == f["risk_totals"]["high"]
 
 
 def test_projection_scales_by_runs(demo):
