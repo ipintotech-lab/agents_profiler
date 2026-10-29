@@ -23,7 +23,9 @@ point and logical identity at three levels, with output distributions. It
 adds evidence alongside the classification; it doesn't change it.
 
 Recommend rule: a decision table over (classification, cost_component)
-per node, described in ``_recommend_for_node``.
+per node, described in ``_recommend_for_node``. Nothing here is
+replay-verified, so no message claims a change is safe; ``describe_node``
+gives the advice-free line diagnose mode shows instead.
 """
 from __future__ import annotations
 
@@ -165,8 +167,8 @@ def _recommend_for_node(s: ActionStats) -> str:
     if s.classification == Classification.NON_DETERMINISTIC and high_cost:
         return (
             f"'{s.node}' ({s.agent}) is non-deterministic and high-cost "
-            f"({len(s.distinct_outcomes)} distinct outcomes) — pin the model/prompt "
-            "or cache its decision to cut repeated spend on a step that doesn't reproduce."
+            f"({len(s.distinct_outcomes)} distinct outcomes) — pin the model/prompt or "
+            "investigate what varies; its answer doesn't reproduce, so caching it would change results."
         )
     if s.classification == Classification.NON_DETERMINISTIC:
         return (
@@ -175,10 +177,23 @@ def _recommend_for_node(s: ActionStats) -> str:
         )
     if s.classification == Classification.DETERMINISTIC and high_cost:
         return (
-            f"'{s.node}' ({s.agent}) is deterministic and high-cost — safe to cache: "
-            "the same input always produces the same output, so repeated calls are pure waste."
+            f"'{s.node}' ({s.agent}) is deterministic and high-cost — a cache candidate: observationally "
+            "consistent on repeated inputs in these traces, not replay-verified. Verify with replay before "
+            "caching; side effects are not proven absent."
         )
     return f"'{s.node}' ({s.agent}) is deterministic and low-cost — healthy, no action needed."
+
+
+# Diagnose mode's per-node line: what was observed, with no advice.
+_NEUTRAL_SUMMARY = {
+    Classification.DETERMINISTIC: "Observationally consistent on repeated inputs in this dataset.",
+    Classification.NON_DETERMINISTIC: "Conflicting outcomes for the same input were observed.",
+    Classification.INSUFFICIENT_EVIDENCE: "Not enough repeated identical inputs to classify.",
+}
+
+
+def describe_node(s: ActionStats) -> str:
+    return _NEUTRAL_SUMMARY[s.classification]
 
 
 def _derivation_for_node(s: ActionStats, max_cost: float) -> str:

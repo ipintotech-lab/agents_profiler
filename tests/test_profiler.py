@@ -42,7 +42,7 @@ def test_observe_counts_sample_traces():
 
 def test_mine_classifies_repeated_consistent_input_as_deterministic():
     # 20 identical-input, identical-outcome observations easily clears the
-    # default thresholds (min_repeated_inputs=10 is about *distinct*
+    # default thresholds (min_repeated_inputs=3 is about *distinct*
     # repeated inputs, so we use a lowered threshold here to keep the
     # fixture small while still exercising the real DETERMINISTIC path).
     events = [_event(run_id=f"r{i}", result="success") for i in range(20)]
@@ -134,6 +134,26 @@ def test_recommend_never_calls_insufficient_evidence_node_safe_to_cache():
     assert recs[0]["classification"] == "INSUFFICIENT_EVIDENCE"
     assert "safe to cache" not in recs[0]["message"]
     assert "insufficient evidence" in recs[0]["message"]
+
+
+def test_recommend_never_claims_a_deterministic_node_is_safe_to_cache():
+    # nothing is replay-verified, so even a costly DETERMINISTIC node is
+    # only a candidate
+    events = [_event(run_id=f"r{i}", result="success") for i in range(20)]
+    recs = recommend(score(mine(events, "wf", min_repeated_inputs=1, min_repeated_observations=20)))
+    assert recs[0]["classification"] == "DETERMINISTIC"
+    assert "safe to cache" not in recs[0]["message"]
+    assert "not replay-verified" in recs[0]["message"]
+
+
+def test_recommend_never_suggests_caching_a_non_deterministic_node():
+    events = [
+        _event(node="flaky", cost=0.05, run_id="r1", result="success"),
+        _event(node="flaky", cost=0.05, run_id="r2", result="failure"),
+    ]
+    recs = recommend(score(mine(events, "wf")))
+    assert recs[0]["classification"] == "NON_DETERMINISTIC"
+    assert "cache its decision" not in recs[0]["message"]
 
 
 def test_run_pipeline_end_to_end_on_sample_traces():
@@ -259,3 +279,28 @@ def test_run_pipeline_has_no_expected_vs_found_for_unknown_workflows():
         TraceEvent(**{**e.model_dump(), "workflow": "my-own-agent"}) for e in load_traces(DATA_PATH)
     ]
     assert "expected_vs_found" not in run_pipeline(events)
+
+
+def test_diagnose_mode_reports_evidence_without_advice():
+    events = load_traces(DATA_PATH)
+    full = run_pipeline(events)
+    diagnosis = run_pipeline(events, mode="diagnose")
+
+    assert full["mode"] == "full" and "recommend" in full and "opportunities" in full["summary"]
+    assert diagnosis["mode"] == "diagnose"
+    assert "recommend" not in diagnosis
+    assert "opportunities" not in diagnosis["summary"]
+    for key in ("data_quality", "observe", "mine", "behavior", "workflow_compile", "profile"):
+        assert key in diagnosis
+    actions = diagnosis["mine"]["by_agent"]["security-agent"]["actions"]
+    assert all(a["summary"] == "Not enough repeated identical inputs to classify." for a in actions)
+
+
+def test_run_pipeline_rejects_unknown_mode():
+    events = load_traces(DATA_PATH)
+    try:
+        run_pipeline(events, mode="optimize")
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised

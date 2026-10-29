@@ -4,6 +4,11 @@ pipeline over an uploaded batch of trace events, for a single workflow.
 Profile delegates to the existing B-POP solver (``src/bpop``) via the
 trace-to-problem mapping in ``src/ingest``; Observe/Mine/Score/Recommend
 are implemented in ``mine.py``.
+
+``mode`` picks the report contract: ``"full"`` (the default, unchanged)
+has everything; ``"diagnose"`` keeps only what was observed -- no
+opportunities and no per-node advice, just a neutral summary per node.
+Both come from the same single computation.
 """
 from __future__ import annotations
 
@@ -25,11 +30,13 @@ from .calibration import calibrate_determinism_thresholds
 from .data_quality import check_data_quality, estimate_missing_costs
 from .determinism import Classification
 from .expected import compare_workflow, has_expected, summarize
-from .mine import mine, observe, recommend, score
+from .mine import describe_node, mine, observe, recommend, score
 from .opportunities import build_summary
 from .patterns import decision_costs, find_repetition
 from .validation import validate
 from .workflow import compile_workflow
+
+MODES = ("full", "diagnose")
 
 
 def _serialize_bpop_result(result: BPOPResult) -> dict:
@@ -68,6 +75,7 @@ def run_pipeline(
     token_prices: tuple[float, float] | None = None,
     output_match: str = "exact",
     order_resolver: str = "simple",
+    mode: str = "full",
 ) -> dict:
     """``token_prices`` -- $ per 1M input / output tokens -- opts in to
     estimating cost for LLM calls that have tokens but no recorded cost.
@@ -75,7 +83,10 @@ def run_pipeline(
     ``behavior.OUTPUT_MATCHES``); the determinism classification always
     compares them exactly. ``order_resolver`` -- ``"simple"`` or ``"asp"``
     -- how the compiled workflow orders conflicting steps (see
-    ``workflow.py``); ``"asp"`` needs the optional ``clingo`` package."""
+    ``workflow.py``); ``"asp"`` needs the optional ``clingo`` package.
+    ``mode`` -- ``"full"`` or ``"diagnose"`` (see the module docstring)."""
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {', '.join(MODES)}")
     recorded = events
     estimated = None
     if token_prices is not None:
@@ -171,6 +182,7 @@ def run_pipeline(
                 "cost_component": round(s.cost_component, 4),
                 "score": round(s.score, 4),
                 "fingerprints": s.fingerprints,
+                "summary": describe_node(s),
             }
         )
         predictions[f"{s.agent}/{s.node}"] = s.classification
@@ -196,6 +208,7 @@ def run_pipeline(
         bucket["actions"].sort(key=lambda a: -a["total_cost"])
 
     report = {
+        "mode": mode,
         "summary": build_summary(events, selected_workflow, repetition, scored),
         "data_quality": check_data_quality([e for e in recorded if e.workflow == selected_workflow], estimated),
         "observe": {**observed, "selected_workflow": selected_workflow},
@@ -218,6 +231,9 @@ def run_pipeline(
         "workflow_compile": compile_workflow(events, selected_workflow, order_resolver),
     }
 
+    if mode == "diagnose":
+        _strip_to_diagnosis(report)
+
     if has_expected(selected_workflow):
         # data from one of the mock agents: show what it was built to contain
         compared = compare_workflow(
@@ -234,3 +250,12 @@ def run_pipeline(
         report["calibration"] = calibrate_determinism_thresholds(events, selected_workflow, ground_truth)
 
     return report
+
+
+def _strip_to_diagnosis(report: dict) -> None:
+    """Drop everything that proposes a change: the per-node advice and the
+    opportunities list. What remains is evidence about the traces."""
+    del report["recommend"]
+    for key in ("opportunities", "num_opportunities", "optimization_types"):
+        del report["summary"][key]
+    report["summary"]["notes"] = "Observational only: diagnose mode lists no optimization actions."
