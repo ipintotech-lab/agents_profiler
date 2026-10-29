@@ -503,7 +503,7 @@ hf auth login</pre>
     <div id="finopsPanel" hidden>
       <details class="hf-guide tab-guide" id="finopsGuide" open>
         <summary>What this tab does, and what to expect</summary>
-        <p>A <b>FinOps view of agent spend</b>: across every agent in the data, how much went to LLM and tool calls, how much of it these traces show was <b>avoidable</b>, and which savings are <b>safe to try first</b>. It uses the same evidence as the other tabs (repeated calls, repeated step chains, LLM choices a rule could make, regions), across all agents at once.</p>
+        <p>A <b>FinOps view of agent spend</b>: across every agent in the data, how much went to LLM and tool calls, how much of it these traces show was <b>avoidable</b>, and which savings have the <b>lowest observational risk</b>. It uses the same evidence as the other tabs (repeated calls, repeated step chains, LLM choices a rule could make, regions), across all agents at once.</p>
         <ol>
           <li><b>Pick the data</b>: click <b>Load demo data</b> (six mock agents, 5,000 trace lines), or choose JSON / JSON Lines files, or paste a Hugging Face dataset link. Aggregate usage exports (token counters per workload, or agent/trigger activations; JSON, JSON Lines or CSV) get a usage report instead: concentration, cache-read share and outliers, with no $ figures.</li>
           <li><b>Optional: runs per month</b>. Traces carry no dates, so there is no "this month". Give your monthly run volume and every $ figure is also shown as a monthly projection (observed cost per run &times; runs).</li>
@@ -555,6 +555,65 @@ hf auth login</pre>
       </div>
       <div class="gensummary" id="finopsSource"></div>
     </div>
+
+    <details class="hf-guide tab-guide" id="contextWrap">
+      <summary>Tell us about the agent (optional)</summary>
+      <p>Traces show what happened; they don't say what a mistake costs or what you'd let us change. Your answers can only make the findings <b>stricter</b> or fill in what the traces leave out, and the report marks every conclusion that rests on them. Nothing here is verified. Leave it all blank to analyze the traces alone.</p>
+      <div class="row">
+        <div class="field">
+          <label for="ctxWorkflow">Applies to workflow <span class="hint">blank: every workflow</span></label>
+          <input type="text" id="ctxWorkflow" placeholder="all workflows">
+        </div>
+        <div class="field">
+          <label for="ctxDomain">Domain <span class="hint">e.g. support, security, finance</span></label>
+          <input type="text" id="ctxDomain">
+        </div>
+        <div class="field grow">
+          <label for="ctxGoal">What the agent is for</label>
+          <input type="text" id="ctxGoal" placeholder="e.g. triage incoming CVEs and assign an owner">
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="ctxImpact">If it decides wrong, how bad is it?</label>
+          <select id="ctxImpact">
+            <option value="">not said</option>
+            <option value="low">low: easy to notice and undo</option>
+            <option value="medium">medium: costs time or money to fix</option>
+            <option value="high">high: hurts customers, money or safety</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="ctxPriority">What matters most</label>
+          <select id="ctxPriority">
+            <option value="">not said</option>
+            <option value="cost">cost</option>
+            <option value="speed">speed</option>
+            <option value="quality">quality</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field grow">
+          <label for="ctxWrites">Steps or tools that change something <span class="hint">comma-separated names: send, update, charge…; never cached</span></label>
+          <input type="text" id="ctxWrites" placeholder="e.g. assign_rep, send_email">
+        </div>
+        <div class="field grow">
+          <label for="ctxReads">Steps or tools that only read <span class="hint">used only where the trace doesn't say</span></label>
+          <input type="text" id="ctxReads" placeholder="e.g. get_owner, lookup_cve">
+        </div>
+      </div>
+      <div class="field">
+        <label>Changes you'd consider <span class="hint">untick to hide a kind of finding; hidden-state warnings always show</span></label>
+        <div class="checks" id="ctxAllowed">
+          <label class="check"><input type="checkbox" value="CACHE_RESULT" checked> cache results</label>
+          <label class="check"><input type="checkbox" value="CONDITIONAL_LLM_BYPASS" checked> replace an LLM call with a rule</label>
+          <label class="check"><input type="checkbox" value="EXTRACT_DETERMINISTIC_SUBSTEP" checked> script repeated steps</label>
+          <label class="check"><input type="checkbox" value="DETERMINISTIC_REGION" checked> rules for some inputs</label>
+        </div>
+      </div>
+      <label class="check"><input type="checkbox" id="ctxApproval"> A person must sign off on any change <span class="hint">high impact implies this</span></label>
+    </details>
 
     <div class="row" style="margin-top:14px" id="formulaRow">
       <div class="field">
@@ -617,6 +676,7 @@ hf auth login</pre>
     <h2><span class="idx">01</span>Summary <span style="font-size:12px;color:var(--faint)">— where the money goes and what to change</span></h2>
     <div class="stats" id="summaryStats"></div>
     <p class="takeaway" id="summaryTakeaway"></p>
+    <p class="lede" id="summaryContext" hidden></p>
     <table id="oppTable"><thead><tr><th>What repeats</th><th>Evidence</th><th class="num">Saving</th><th>Do this</th></tr></thead><tbody></tbody></table>
     <p class="lede" id="oppNotes"></p>
 
@@ -776,6 +836,7 @@ hf auth login</pre>
     <p class="takeaway" id="finopsTakeaway"></p>
     <div class="stats explained" id="finopsStats"></div>
     <p class="lede" id="finopsNotes"></p>
+    <p class="lede" id="finopsContext" hidden></p>
 
     <h2><span class="idx">02</span>Agents <span style="font-size:12px;color:var(--faint)">— spend and avoidable spend per agent workflow, most avoidable first</span></h2>
     <p class="lede">One row per agent workflow. The bar is the workflow's spend; the amber part is what these traces show was avoidable (each action counted once). <i>Cost per run</i> is total spend over runs. Sort by clicking a header.</p>
@@ -962,6 +1023,7 @@ function setMode(m) {
   sweepPanel.hidden = m !== 'sweep';
   pocPanel.hidden = m !== 'poc';
   finopsPanel.hidden = m !== 'finops';
+  document.getElementById('contextWrap').hidden = m === 'sweep' || m === 'poc';
   if (m === 'poc') loadPocExpected();
   // these tabs run on their own button and show their own report
   const ownReport = m === 'sweep' || m === 'poc' || m === 'finops';
@@ -1681,6 +1743,8 @@ form.addEventListener('submit', async (ev) => {
   fd.append('output_match', document.getElementById('outputMatch').value);
   if (document.getElementById('keepHistory').checked) fd.append('keep_history', 'true');
   fd.append('order_resolver', document.getElementById('orderResolver').value);
+  const context = contextJson();
+  if (context) fd.append('context', context);
   if (tokenPrices) {
     fd.append('price_input_per_mtok', tokenPrices.input);
     fd.append('price_output_per_mtok', tokenPrices.output);
@@ -1859,6 +1923,8 @@ async function runFinops() {
   const rpm = document.getElementById('finopsRunsPerMonth').value;
   if (rpm) fd.append('runs_per_month', rpm);
   fd.append('output_match', document.getElementById('finopsOutputMatch').value);
+  const context = contextJson();
+  if (context) fd.append('context', context);
   const btn = document.getElementById('finopsBtn');
   btn.disabled = true;
   btn.textContent = 'Analyzing…';
@@ -1997,6 +2063,40 @@ function renderAggregate(agg) {
 }
 
 function riskPill(r) { return `<span class="risk ${r}">${r}</span>`; }
+// The "Tell us about the agent" answers as an AnalysisContext (JSON), or
+// null if nothing was filled in.
+function contextJson() {
+  const val = id => document.getElementById(id).value.trim();
+  const names = id => val(id).split(',').map(x => x.trim()).filter(Boolean);
+  const boxes = [...document.querySelectorAll('#ctxAllowed input')];
+  const w = {
+    domain: val('ctxDomain') || null,
+    goal: val('ctxGoal') || null,
+    failure_impact: val('ctxImpact') || null,
+    priority: val('ctxPriority') || null,
+    side_effect_operations: names('ctxWrites'),
+    read_only_operations: names('ctxReads'),
+    allowed_optimizations: boxes.every(b => b.checked) ? null : boxes.filter(b => b.checked).map(b => b.value),
+    requires_human_approval: document.getElementById('ctxApproval').checked,
+  };
+  const said = Object.values(w).some(v => Array.isArray(v) ? v.length : v);
+  return said ? JSON.stringify({ workflows: { [val('ctxWorkflow') || '*']: w } }) : null;
+}
+
+// One line on what the user's answers changed in this report.
+function contextNote(el, context, hidden) {
+  el.hidden = !context;
+  if (!context) return;
+  const scope = Object.keys(context.workflows).map(k => k === '*' ? 'every workflow' : k).join(', ') || 'no workflow';
+  el.innerHTML = `<b>Based on what you told us</b> (for ${esc(scope)}; your answers, not verified). ` +
+    'Steps you said change something are never cached; "read-only" counts only where the trace doesn\'t say; ' +
+    'a high-impact answer can only raise risk.' + (hidden ? ` <b>${hidden}</b> finding${hidden === 1 ? '' : 's'} hidden by the changes you'd consider.` : '');
+}
+
+function approvalPill(o) {
+  return o.requires_approval ? ' <span class="pill assumed" title="you said a person must sign off, or that a wrong decision is high-impact">needs sign-off</span>' : '';
+}
+
 function findingWhere(o) {
   const at = o.where ? ` when ${esc(o.where)}` : o.input && Object.keys(o.input).length
     ? ` for ${esc(Object.entries(o.input).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ').slice(0, 80))}` : '';
@@ -2021,6 +2121,8 @@ function renderFinops(f) {
     statCardExplained(`${pctOf(c.llm_calls_with_cost, c.llm_calls)} · ${pctOf(c.calls_with_repeated_input, c.calls)}`, 'data coverage', `LLM calls with a recorded cost · calls whose input was seen more than once. Savings can only be measured on calls with cost, and most findings need repeated inputs.`) +
     (p ? statCardExplained(usd(p.spend), 'monthly projection', `spend at ${Number(p.runs_per_month).toLocaleString()} runs a month, from the observed cost per run (${p.factor.toFixed(1)}× this data). Assumes the same mix of agents.`) : '');
   document.getElementById('finopsNotes').textContent = f.notes;
+  contextNote(document.getElementById('finopsContext'), f.context,
+    f.context ? Object.values(f.context.hidden_by_context).flatMap(Object.values).reduce((a, b) => a + b, 0) : 0);
 
   renderFinopsAgents(f);
 
@@ -2030,7 +2132,7 @@ function renderFinops(f) {
       <td>${esc(OPPORTUNITY_LABELS[w.type] || w.type)}<div class="hint">${esc(w.action)}</div></td>
       <td>${findingWhere(w)}</td>
       <td class="num">${usd(w.saving)}${monthly(w.saving)}</td>
-      <td>${riskPill(w.risk)}<div class="hint">${w.risk_reasons.map(esc).join('; ')}</div></td>
+      <td>${riskPill(w.risk)}${approvalPill(w)}<div class="hint">${w.risk_reasons.map(esc).join('; ')}</div></td>
       <td class="hint">${esc(w.evidence)} · evidence ${w.evidence_strength}</td>
     </tr>`).join('') || '<tr><td colspan="6" class="hint">Nothing avoidable found.</td></tr>';
 
@@ -2065,7 +2167,7 @@ function renderFinops(f) {
       : `${items.length} finding${items.length === 1 ? '' : 's'}${f.risk_totals[key] ? ` · ${usd(f.risk_totals[key].saving)} counted` : ''}`;
     return `<div class="fo-col"><h3>${esc(label)}</h3><div class="colsum">${sum}</div>${shown.map(x => `
       <div class="fo-card">
-        ${riskPill(x.risk)} <span>${esc(OPPORTUNITY_LABELS[x.type] || x.type)}</span>
+        ${riskPill(x.risk)}${approvalPill(x)} <span>${esc(OPPORTUNITY_LABELS[x.type] || x.type)}</span>
         <div class="t">${findingWhere(x)}</div>
         <div>${esc(x.action)}</div>
         <div style="margin-top:4px">${x.saving ? `<span class="${x.counted ? 's' : 'hint'}">${usd(x.saving)}</span>${x.counted ? '' : ' <span class="hint">overlaps a larger finding</span>'}` : '<span class="hint">no direct saving</span>'} · evidence ${x.evidence_strength} (${x.observations})</div>
@@ -2629,6 +2731,10 @@ function renderSummary(data) {
     <tr class="opt-head"><td colspan="4"><span class="opt-type">${esc(type)}</span> <span class="opt-desc">${esc(sm.optimization_types[type] || '')}</span></td></tr>
     ${opps.filter(o => o.type === type).map(row).join('')}`).join('') : '<tr><td colspan="4">No opportunities yet.</td></tr>';
   document.getElementById('oppNotes').textContent = sm.notes;
+  const sc = document.getElementById('summaryContext');
+  contextNote(sc, data.context, sm.hidden_by_context);
+  if (data.context && !data.context.applied)
+    sc.innerHTML = `Your answers about the agent are for ${esc(Object.keys(data.context.workflows).join(', '))}, not <code>${esc(data.observe.selected_workflow)}</code>: this report doesn't use them.`;
 }
 
 function seqTakeaway(seqs) {

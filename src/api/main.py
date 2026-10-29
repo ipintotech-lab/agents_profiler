@@ -42,6 +42,7 @@ from ingest.usage import (
 )
 from profiler import asp, history, run_pipeline, run_poc, run_sweep
 from profiler.behavior import OUTPUT_MATCHES, build_behavior
+from profiler.context import AnalysisContext, parse_context
 from profiler.finops import build_finops
 from profiler.pipeline import MODES
 from profiler.usage import build_aggregate
@@ -260,6 +261,13 @@ async def _load_events(
     return events, file_summaries
 
 
+def _parse_context(text: str | None) -> AnalysisContext | None:
+    try:
+        return parse_context(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/analyze")
 async def analyze(
     file: list[UploadFile] | None = File(None),  # noqa: B008
@@ -279,6 +287,7 @@ async def analyze(
     keep_history: bool = Form(False),
     order_resolver: str = Form("simple"),
     mode: str = Form("full"),
+    context: str | None = Form(None),
 ) -> dict:
     """Run the uploaded trace file(s) through Observe -> Profile -> Mine ->
     Score -> Recommend for one workflow (auto-picked if not given).
@@ -316,6 +325,11 @@ async def analyze(
     ``mode`` (full / diagnose): ``diagnose`` returns only what the traces
     show -- no opportunities and no per-node advice. Optimization findings
     come from ``/finops``; none of them are replay-verified.
+
+    ``context`` is an optional JSON ``AnalysisContext`` (see
+    ``profiler/context.py``): what the user says about the agents. It can
+    only make findings stricter or fill gaps the traces leave, and is
+    echoed in the report as user-declared and unverified.
     """
     if output_match not in OUTPUT_MATCHES:
         raise HTTPException(status_code=400, detail=f"output_match must be one of {', '.join(OUTPUT_MATCHES)}")
@@ -330,6 +344,7 @@ async def analyze(
         if price_input_per_mtok < 0 or price_output_per_mtok < 0:
             raise HTTPException(status_code=400, detail="token prices can't be negative")
         token_prices = (price_input_per_mtok, price_output_per_mtok)
+    parsed_context = _parse_context(context)
     events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
     parsed_ground_truth = None
     if ground_truth:
@@ -350,6 +365,7 @@ async def analyze(
             output_match=output_match,
             order_resolver=order_resolver,
             mode=mode,
+            context=parsed_context,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -408,11 +424,13 @@ async def finops(
     hf_token: str | None = Form(None),
     output_match: str = Form("exact"),
     runs_per_month: float | None = Form(None),
+    context: str | None = Form(None),
 ) -> dict:
     """AI Agent FinOps view of the uploaded traces (same inputs as
     ``/analyze``): spend across every workflow, avoidable spend as a lower
     bound, and opportunities with a heuristic risk. ``runs_per_month``
-    projects the $ figures from the observed cost per run.
+    projects the $ figures from the observed cost per run. ``context`` is
+    the same optional ``AnalysisContext`` JSON as on ``/analyze``.
 
     Aggregate usage / activation exports (token counters per workload, no
     steps) get a usage report instead, marked ``"kind": "aggregate"``."""
@@ -420,13 +438,14 @@ async def finops(
         raise HTTPException(status_code=400, detail=f"output_match must be one of {', '.join(OUTPUT_MATCHES)}")
     if runs_per_month is not None and runs_per_month <= 0:
         raise HTTPException(status_code=400, detail="runs_per_month must be positive")
+    parsed_context = _parse_context(context)
     if file and not hf_url:
         aggregate = await _read_aggregate(file)
         if aggregate is not None:
             return aggregate
     events, file_summaries = await _load_events(file, hf_url, hf_file, hf_limit, hf_token)
     try:
-        result = await run_in_threadpool(build_finops, events, output_match, runs_per_month)
+        result = await run_in_threadpool(build_finops, events, output_match, runs_per_month, parsed_context)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     result["files"] = file_summaries
