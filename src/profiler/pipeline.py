@@ -27,6 +27,7 @@ from ingest.trace_schema import TraceEvent
 
 from .behavior import build_behavior
 from .calibration import calibrate_determinism_thresholds
+from .context import AnalysisContext
 from .data_quality import check_data_quality, estimate_missing_costs
 from .determinism import Classification
 from .expected import compare_workflow, has_expected, summarize
@@ -76,6 +77,7 @@ def run_pipeline(
     output_match: str = "exact",
     order_resolver: str = "simple",
     mode: str = "full",
+    context: AnalysisContext | None = None,
 ) -> dict:
     """``token_prices`` -- $ per 1M input / output tokens -- opts in to
     estimating cost for LLM calls that have tokens but no recorded cost.
@@ -207,9 +209,15 @@ def run_pipeline(
     for bucket in agents_summary.values():
         bucket["actions"].sort(key=lambda a: -a["total_cost"])
 
+    workflow_context = context.for_workflow(selected_workflow) if context else None
     report = {
         "mode": mode,
-        "summary": build_summary(events, selected_workflow, repetition, scored),
+        "context": (
+            {**context.model_dump(), "applied": workflow_context.model_dump() if workflow_context else None}
+            if context
+            else None
+        ),
+        "summary": build_summary(events, selected_workflow, repetition, scored, workflow_context),
         "data_quality": check_data_quality([e for e in recorded if e.workflow == selected_workflow], estimated),
         "observe": {**observed, "selected_workflow": selected_workflow},
         "formula": {"used": formula_used, "defaults": formula_defaults, "per_workflow": formula_by_workflow},
@@ -256,6 +264,6 @@ def _strip_to_diagnosis(report: dict) -> None:
     """Drop everything that proposes a change: the per-node advice and the
     opportunities list. What remains is evidence about the traces."""
     del report["recommend"]
-    for key in ("opportunities", "num_opportunities", "optimization_types"):
+    for key in ("opportunities", "num_opportunities", "hidden_by_context", "optimization_types"):
         del report["summary"][key]
     report["summary"]["notes"] = "Observational only: diagnose mode lists no optimization actions."

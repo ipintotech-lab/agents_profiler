@@ -26,6 +26,7 @@ from collections import Counter, defaultdict
 from ingest.trace_schema import TraceEvent
 
 from .behavior import build_behavior, region_rule_text
+from .context import OPTIMIZATIONS, AnalysisContext, WorkflowContext
 from .mine import mine, observe, score
 from .opportunities import OPTIMIZATION_TYPES, find_opportunities
 from .patterns import find_repetition, is_router_call
@@ -100,10 +101,11 @@ def _assess_kind(o: dict) -> tuple[str, list[str]]:
     if kind == "CACHE_RESULT":
         # calls declared (or named) as changing something are never suggested
         effects = o["side_effects"]
-        if effects["has_side_effects"] is not False and effects["cache_eligible"] is not True:
+        if effects["changes_something"] is not False and effects["cache_eligible"] is not True:
             return "medium", [f"identical input and output {n} times", "side effects not declared"]
         if n >= MODERATE_EVIDENCE:
-            return "low", [f"identical input and output {n} times", "declared free of side effects"]
+            basis = "you said it only reads (not verified)" if effects["signal"] == "user_declared" else "declared free of side effects"
+            return "low", [f"identical input and output {n} times", basis]
         return "medium", [f"only {n} identical calls seen"]
     if kind == "CONDITIONAL_LLM_BYPASS":
         if n >= 2 * MODERATE_EVIDENCE:
@@ -120,6 +122,18 @@ def _assess_kind(o: dict) -> tuple[str, list[str]]:
     if n < 2 * MODERATE_EVIDENCE:
         reasons.append(f"sequence seen {n} times")
     return ("medium", reasons) if reasons else ("low", [f"sequence seen {n} times", "no step declared or named as changing anything"])
+
+
+def apply_context(o: dict, context: WorkflowContext | None) -> None:
+    """Make ``o`` stricter by what the user said about its workflow: a
+    high-impact workflow has no low-risk change, and sign-off is flagged
+    on every proposed change where the user asked for it."""
+    if context is None or o["type"] not in OPTIMIZATIONS:
+        return
+    if context.failure_impact == "high" and o["risk"] == "low":
+        o["risk"] = "medium"
+        o["risk_reasons"] = [*o["risk_reasons"], "a wrong decision is high-impact (your answer)"]
+    o["requires_approval"] = context.needs_approval()
 
 
 def _scope(o: dict) -> tuple:
@@ -182,7 +196,12 @@ def _model_mix(events: list[TraceEvent]) -> list[dict]:
     return sorted(rows, key=lambda r: -r["spend"])
 
 
-def build_finops(events: list[TraceEvent], output_match: str = "exact", runs_per_month: float | None = None) -> dict:
+def build_finops(
+    events: list[TraceEvent],
+    output_match: str = "exact",
+    runs_per_month: float | None = None,
+    context: AnalysisContext | None = None,
+) -> dict:
     observed = observe(events)
     if not observed["workflows"]:
         raise ValueError("no workflow found in the uploaded trace file")
@@ -195,10 +214,12 @@ def build_finops(events: list[TraceEvent], output_match: str = "exact", runs_per
     opportunities: list[dict] = []
     workflows: list[dict] = []
     actions: list[dict] = []
+    hidden_by_context: dict[str, dict[str, int]] = {}
     for wf in (w["name"] for w in observed["workflows"]):
         relevant = [e for e in events if e.workflow == wf]
         stats = score(mine(events, wf))
-        found = find_opportunities(events, wf, find_repetition(events, wf), stats)
+        wf_context = context.for_workflow(wf) if context else None
+        found = find_opportunities(events, wf, find_repetition(events, wf), stats, wf_context)
         behavior = build_behavior(events, wf, output_match)
         found += _region_opportunities(behavior)
         # A sequence saves the routing calls between its steps, and a cached
@@ -224,6 +245,13 @@ def build_finops(events: list[TraceEvent], output_match: str = "exact", runs_per
             if o["type"] in ("CACHE_RESULT", "CONDITIONAL_LLM_BYPASS") and hidden & set(o["nodes"]):
                 o["risk"] = "high"
                 o["risk_reasons"] = ["the same action gives different results for the same input elsewhere", *o["risk_reasons"]]
+        for o in found:
+            apply_context(o, wf_context)
+        if wf_context:
+            hidden = Counter(o["type"] for o in found if not wf_context.allows(o["type"]))
+            if hidden:
+                hidden_by_context[wf] = dict(hidden)
+            found = [o for o in found if wf_context.allows(o["type"])]
         opportunities += found
         spend = sum(e.cost for e in relevant)
         runs = len({e.run_id for e in relevant})
@@ -324,6 +352,9 @@ def build_finops(events: list[TraceEvent], output_match: str = "exact", runs_per
         "models": _model_mix(events),
         "types": TYPES,
         "output_match": output_match,
+        "context": (
+            {**context.model_dump(), "hidden_by_context": hidden_by_context} if context else None
+        ),
         "notes": (
             "Avoidable spend is the observed cost of calls an opportunity would have removed, each action "
             "counted once: a lower bound, not a forecast. Risk is a heuristic from evidence size and the kind "

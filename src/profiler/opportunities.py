@@ -12,6 +12,7 @@ import re
 
 from ingest.trace_schema import TraceEvent
 
+from .context import WorkflowContext
 from .mine import ActionStats
 
 MAX_PER_TYPE = 5
@@ -125,23 +126,28 @@ def declared_side_effects(events: list[TraceEvent]) -> dict[str, dict]:
     return declared
 
 
-def side_effect_signal(node: str, names: set[str], declared: dict) -> dict:
+def side_effect_signal(node: str, names: set[str], declared: dict, user: bool | None = None) -> dict:
     """Whether ``node`` changes something (``changes_something``: True /
     False / None) and where that comes from (``signal``): ``declared`` by
-    the trace, a ``heuristic_name_match`` on its operation names (not
-    authoritative), or ``unknown``. ``blocks_cache`` rules caching out: a
-    declared side effect or ``cache_eligible=false`` always does, a name
-    match does unless the trace declares the node cache-eligible."""
-    if declared["has_side_effects"] is not None:
+    the trace, ``user_declared`` in the analysis context (``user``, see
+    ``context.py``), a ``heuristic_name_match`` on its operation names (not
+    authoritative), or ``unknown``. A user's "changes something" wins over
+    the trace; a user's "read-only" only fills in for a trace that says
+    nothing. ``blocks_cache`` rules caching out: a declared side effect or
+    ``cache_eligible=false`` always does, a name match does unless the
+    trace declares the node cache-eligible."""
+    if user is True and declared["has_side_effects"] is not True:
+        signal, changes = "user_declared", True
+    elif declared["has_side_effects"] is not None:
         signal, changes = "declared", declared["has_side_effects"]
+    elif user is False:
+        signal, changes = "user_declared", False
     elif any(has_side_effect(n) for n in names | {node}):
         signal, changes = "heuristic_name_match", True
     else:
         signal, changes = "unknown", None
-    blocks_cache = (
-        declared["cache_eligible"] is False
-        or declared["has_side_effects"] is True
-        or (signal == "heuristic_name_match" and declared["cache_eligible"] is not True)
+    blocks_cache = declared["cache_eligible"] is False or (
+        changes is True and not (signal == "heuristic_name_match" and declared["cache_eligible"] is True)
     )
     return {**declared, "signal": signal, "changes_something": changes, "blocks_cache": blocks_cache}
 
@@ -191,8 +197,10 @@ def _fingerprint_opportunities(
                     "observed_cost": s.avg_cost * s.occurrences,
                 }
             )
-        # a rule standing in for the call would skip what it declares it changes
-        if signals[s.node]["has_side_effects"] is True:
+        # a rule standing in for the call would skip what it's declared (by
+        # the trace or the user) to change; a name match alone doesn't count
+        effects = signals[s.node]
+        if effects["changes_something"] is True and effects["signal"] != "heuristic_name_match":
             continue
         # One configuration at a time: the same choice across two models is
         # two observations of different actions, not one rule.
@@ -224,20 +232,26 @@ def _fingerprint_opportunities(
 
 
 def find_opportunities(
-    events: list[TraceEvent], workflow: str, repetition: dict, stats: list[ActionStats]
+    events: list[TraceEvent],
+    workflow: str,
+    repetition: dict,
+    stats: list[ActionStats],
+    context: WorkflowContext | None = None,
 ) -> list[dict]:
     """Every opportunity found, largest saving first (the summary shows only
-    a few of each type)."""
+    a few of each type). ``context`` adds what the user said about which
+    steps change something."""
     relevant = [e for e in events if e.workflow == workflow]
     llm_nodes = {(e.agent, e.node) for e in relevant if e.model}
     tool_names: dict[str, set[str]] = {}
     for e in relevant:
         if e.tool is not None:
             tool_names.setdefault(e.node, set()).add(e.tool.name)
-    signals = {
-        node: side_effect_signal(node, tool_names.get(node, set()), declared)
-        for node, declared in declared_side_effects(relevant).items()
-    }
+    signals = {}
+    for node, declared in declared_side_effects(relevant).items():
+        names = tool_names.get(node, set())
+        user = context.user_side_effect(names | {node}) if context else None
+        signals[node] = side_effect_signal(node, names, declared, user)
     opportunities = (
         _sequence_opportunities(repetition["sequences"], signals)
         + _cache_opportunities(repetition["calls"], signals)
@@ -247,9 +261,16 @@ def find_opportunities(
     return opportunities
 
 
-def build_summary(events: list[TraceEvent], workflow: str, repetition: dict, stats: list[ActionStats]) -> dict:
+def build_summary(
+    events: list[TraceEvent],
+    workflow: str,
+    repetition: dict,
+    stats: list[ActionStats],
+    context: WorkflowContext | None = None,
+) -> dict:
     relevant = [e for e in events if e.workflow == workflow]
-    opportunities = find_opportunities(events, workflow, repetition, stats)
+    found = find_opportunities(events, workflow, repetition, stats, context)
+    opportunities = [o for o in found if context is None or context.allows(o["type"])]
     # A few of each type, so one kind of finding can't fill the list.
     per_type: dict[str, int] = {}
     shown = []
@@ -261,6 +282,7 @@ def build_summary(events: list[TraceEvent], workflow: str, repetition: dict, sta
         "totals": _totals(relevant),
         "opportunities": shown,
         "num_opportunities": len(opportunities),
+        "hidden_by_context": len(found) - len(opportunities),
         "optimization_types": OPTIMIZATION_TYPES,
         "notes": (
             "Savings are the observed cost of calls that would not have run -- measured from these traces, "

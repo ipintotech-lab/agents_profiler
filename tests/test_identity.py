@@ -67,7 +67,7 @@ def test_rule_bypass_is_one_configuration_at_a_time():
 
 def test_unrecorded_configuration_is_never_low_risk():
     known = {"type": "CACHE_RESULT", "observations": 50, "nodes": ["lookup"], "identity": {"missing": []},
-             "side_effects": {"has_side_effects": False, "cache_eligible": None}}
+             "side_effects": {"has_side_effects": False, "cache_eligible": None, "signal": "declared", "changes_something": False}}
     assert assess(known)[0] == "low"
     risk, reasons = assess({**known, "identity": {"missing": ["workflow_version"]}})
     assert risk == "medium" and "workflow_version not recorded" in reasons
