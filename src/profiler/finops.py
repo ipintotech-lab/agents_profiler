@@ -80,6 +80,15 @@ def evidence_strength(observations: int) -> str:
 def assess(o: dict) -> tuple[str, list[str]]:
     """Heuristic risk of acting on ``o`` (low / medium / high), with the
     reasons. Not a replay result."""
+    risk, reasons = _assess_kind(o)
+    missing = o.get("identity", {}).get("missing")
+    if missing and risk == "low":
+        # can't confirm the repeats ran under one configuration
+        return "medium", [*reasons, f"{' and '.join(missing)} not recorded"]
+    return risk, reasons
+
+
+def _assess_kind(o: dict) -> tuple[str, list[str]]:
     n, kind = o["observations"], o["type"]
     if kind == "REVIEW_HIDDEN_STATE":
         return "high", ["results change for the same input: fix the cause before automating anything"]
@@ -106,13 +115,19 @@ def assess(o: dict) -> tuple[str, list[str]]:
 
 
 def _scope(o: dict) -> tuple:
-    return (o["type"], json.dumps(o.get("input"), sort_keys=True, default=str), o.get("trigger"), o.get("where"))
+    return (
+        o["type"],
+        json.dumps(o.get("input"), sort_keys=True, default=str),
+        o.get("trigger"),
+        o.get("where"),
+        json.dumps(o.get("identity"), sort_keys=True),
+    )
 
 
 def _overlaps(a: dict, b: dict) -> bool:
     """Whether two opportunities could remove the same calls: they touch a
     common action, unless both are per-input findings (cache / rule
-    bypass / region) of one kind for different inputs."""
+    bypass / region) of one kind for different inputs or configurations."""
     if not set(a["touches"]) & set(b["touches"]):
         return False
     per_input = {"CACHE_RESULT", "CONDITIONAL_LLM_BYPASS", REGION_TYPE}

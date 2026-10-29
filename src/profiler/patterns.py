@@ -20,13 +20,13 @@ run.
 """
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from dataclasses import dataclass
 
 from ingest.trace_schema import TraceEvent
 
 from .determinism import _display_value
+from .identity import ActionIdentity, action_identity, describe
 
 MIN_SEQUENCE_LENGTH = 2
 MAX_SEQUENCE_LENGTH = 6
@@ -191,15 +191,20 @@ def repeated_sequences(events: list[TraceEvent]) -> list[dict]:
 
 
 def repeated_calls(events: list[TraceEvent]) -> list[dict]:
+    """Calls repeated with the same action identity (``identity.py``): same
+    agent, node, input, model and version -- a cached result is only
+    reused under the configuration that produced it."""
     shares = decision_costs(events)
-    groups: dict[tuple[str, str], list[TraceEvent]] = defaultdict(list)
+    llm_nodes = {(e.agent, e.node) for e in events if e.model}
+    groups: dict[ActionIdentity, list[TraceEvent]] = defaultdict(list)
     for e in events:
         if is_router_call(e):
             continue
-        groups[(e.node, json.dumps(e.input_state, sort_keys=True, default=str))].append(e)
+        groups[action_identity(e)].append(e)
 
     calls = []
-    for (node, _), group in groups.items():
+    for identity, group in groups.items():
+        node = identity.node
         if len(group) < 2:
             continue
         outcomes = {(e.decision.selected if e.decision else None, e.result) for e in group}
@@ -208,6 +213,7 @@ def repeated_calls(events: list[TraceEvent]) -> list[dict]:
             {
                 "node": node,
                 "input": {k: _display_value(v) for k, v in group[0].input_state.items()},
+                "identity": describe(identity, (group[0].agent, node) in llm_nodes),
                 "count": len(group),
                 "runs": len({e.run_id for e in group}),
                 "distinct_outputs": len(outcomes),
