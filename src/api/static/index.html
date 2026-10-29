@@ -556,7 +556,7 @@ hf auth login</pre>
       <div class="gensummary" id="finopsSource"></div>
     </div>
 
-    <details class="hf-guide tab-guide" id="contextWrap">
+    <details class="hf-guide tab-guide" id="contextWrap" open>
       <summary>Tell us about the agent (optional)</summary>
       <p>Traces show what happened; they don't say what a mistake costs or what you'd let us change. Your answers can only make the findings <b>stricter</b> or fill in what the traces leave out, and the report marks every conclusion that rests on them. Nothing here is verified. Leave it all blank to analyze the traces alone.</p>
       <div class="row">
@@ -582,6 +582,14 @@ hf auth login</pre>
             <option value="medium">medium: costs time or money to fix</option>
             <option value="high">high: hurts customers, money or safety</option>
           </select>
+        </div>
+        <div class="field">
+          <label for="ctxModel">Model the agent runs on <span class="hint">pick or type</span></label>
+          <input type="text" id="ctxModel" list="ctxModels" placeholder="e.g. GLM-4.6">
+          <datalist id="ctxModels">
+            <option value="GLM-4.6"><option value="GLM-4.5"><option value="GLM-4.5-Air">
+            <option value="Claude"><option value="GPT"><option value="Gemini"><option value="Llama"><option value="Qwen"><option value="DeepSeek">
+          </datalist>
         </div>
         <div class="field">
           <label for="ctxPriority">What matters most</label>
@@ -2074,6 +2082,7 @@ function contextJson() {
     goal: val('ctxGoal') || null,
     failure_impact: val('ctxImpact') || null,
     priority: val('ctxPriority') || null,
+    model: val('ctxModel') || null,
     side_effect_operations: names('ctxWrites'),
     read_only_operations: names('ctxReads'),
     allowed_optimizations: boxes.every(b => b.checked) ? null : boxes.filter(b => b.checked).map(b => b.value),
@@ -2088,7 +2097,8 @@ function contextNote(el, context, hidden) {
   el.hidden = !context;
   if (!context) return;
   const scope = Object.keys(context.workflows).map(k => k === '*' ? 'every workflow' : k).join(', ') || 'no workflow';
-  el.innerHTML = `<b>Based on what you told us</b> (for ${esc(scope)}; your answers, not verified). ` +
+  const models = [...new Set(Object.values(context.workflows).map(w => w.model).filter(Boolean))];
+  el.innerHTML = `<b>Based on what you told us</b> (for ${esc(scope)}${models.length ? `, model ${esc(models.join(', '))}` : ''}; your answers, not verified). ` +
     'Steps you said change something are never cached; "read-only" counts only where the trace doesn\'t say; ' +
     'a high-impact answer can only raise risk.' + (hidden ? ` <b>${hidden}</b> finding${hidden === 1 ? '' : 's'} hidden by the changes you'd consider.` : '');
 }
