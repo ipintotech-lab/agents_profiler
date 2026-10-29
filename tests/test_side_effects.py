@@ -1,6 +1,6 @@
 from ingest import TraceEvent
 from ingest.normalize import normalize_event
-from profiler.finops import assess
+from profiler.finops import assess, build_finops
 from profiler.mine import mine, score
 from profiler.opportunities import declared_side_effects, find_opportunities
 from profiler.patterns import find_repetition
@@ -111,3 +111,5 @@ def test_varying_outputs_on_a_partly_recorded_input_are_not_hidden_state():
     assert classification == "NON_DETERMINISTIC" and hidden
     classification, hidden = found(input_complete=False)
     assert classification == "INSUFFICIENT_EVIDENCE" and hidden == []
+    (action,) = build_finops([_llm(f"r{i}", "a", input_complete=False) for i in range(5)])["actions"]
+    assert action["input_recorded"] is False

@@ -65,6 +65,33 @@ def test_nothing_is_called_ready_or_safe_without_replay(demo):
         assert phrase not in text
 
 
+
+def test_findings_group_by_a_shared_step_of_one_kind(demo):
+    _, f = demo
+    by_group = {}
+    for o in f["opportunities"]:
+        by_group.setdefault(o["group"], []).append(o)
+    assert f["overview"]["groups"] == len(by_group) <= f["overview"]["opportunities"]
+    for members in by_group.values():
+        lead = members[0]  # the largest
+        assert all(o["saving"] is None or (o["saving"] or 0) <= (lead["saving"] or 0) for o in members)
+        for o in members[1:]:
+            assert (o["workflow"], o["type"]) == (lead["workflow"], lead["type"])
+            assert set(o["nodes"]) & set(lead["nodes"])
+
+
+def test_next_steps_lead_groups_and_never_say_apply(demo):
+    _, f = demo
+    steps = f["next_steps"]
+    assert 0 < len(steps) <= 3
+    assert len({n["group"] for n in steps}) == len(steps)
+    assert all(n["step"] in ("investigate", "declare", "review", "replay") for n in steps)
+    if any(o["risk"] == "high" for o in f["opportunities"]):
+        assert any(n["step"] == "investigate" for n in steps)
+    for n in steps:
+        assert ("side effects not declared" in n["risk_reasons"]) == (n["step"] == "declare") or n["step"] == "investigate"
+
+
 def test_deprecated_ready_keys_alias_low_risk(demo):
     _, f = demo
     assert f["overview"]["ready_saving"] == f["overview"]["low_risk_saving"]

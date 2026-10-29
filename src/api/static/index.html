@@ -63,6 +63,12 @@
   .fo-card { background: var(--panel2); border: 1px solid var(--line); padding: 9px 10px; margin-bottom: 8px; font-size: 12px; color: var(--dim); }
   .fo-card .t { color: var(--ink); font-size: 12.5px; margin: 3px 0; word-break: break-word; }
   .fo-card .s { color: var(--amber); font-size: 13px; }
+  .fo-next { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 10px; max-width: 980px; }
+  .fo-next li { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--amber); padding: 10px 14px; font-size: 14px; color: var(--dim); }
+  .fo-next li.investigate { border-left-color: var(--red); }
+  .fo-next .step { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); margin-right: 8px; }
+  .fo-next .t { color: var(--ink); }
+  .fo-next .do { margin-top: 4px; }
   .fo-headline { font-family: var(--serif); font-size: 22px; color: var(--ink); margin: 6px 0 2px; max-width: 900px; }
   .hint { color: var(--faint); font-size: 11px; margin-top: 2px; }
   .tablenote { margin: 14px 0 6px; }
@@ -77,6 +83,7 @@
   .stat .k { color: var(--faint); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; margin-top: 3px; }
   .stat .d { color: var(--dim); font-size: 11px; line-height: 1.45; margin-top: 8px; }
   .stats.explained { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  #finopsStats { grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); }
 
   .barrow { display: flex; align-items: center; gap: 14px; margin: 5px 0; flex-wrap: wrap; }
   .barrow .bl { width: 190px; flex-shrink: 0; color: var(--dim); font-size: 12px; }
@@ -503,13 +510,13 @@ hf auth login</pre>
     <div id="finopsPanel" hidden>
       <details class="hf-guide tab-guide" id="finopsGuide" open>
         <summary>What this tab does, and what to expect</summary>
-        <p>A <b>FinOps view of agent spend</b>: across every agent in the data, how much went to LLM and tool calls, how much of it these traces show was <b>avoidable</b>, and which savings have the <b>lowest observational risk</b>. It uses the same evidence as the other tabs (repeated calls, repeated step chains, LLM choices a rule could make, regions), across all agents at once.</p>
+        <p>A <b>FinOps view of agent spend</b>: across every agent in the data, how much went to LLM and tool calls, the <b>candidate cost</b> the findings point at, and <b>what to check next</b> for each. It uses the same evidence as the other tabs (repeated calls, repeated step chains, LLM choices a rule could make, regions), across all agents at once.</p>
         <ol>
           <li><b>Pick the data</b>: click <b>Load demo data</b> (six mock agents, 5,000 trace lines), or choose JSON / JSON Lines files, or paste a Hugging Face dataset link. Aggregate usage exports (token counters per workload, or agent/trigger activations; JSON, JSON Lines or CSV) get a usage report instead: concentration, cache-read share and outliers, with no $ figures.</li>
           <li><b>Optional: runs per month</b>. Traces carry no dates, so there is no "this month". Give your monthly run volume and every $ figure is also shown as a monthly projection (observed cost per run &times; runs).</li>
           <li>Click <b>Analyze spend</b>.</li>
         </ol>
-        <p><b>How to read the numbers</b>: <i>avoidable</i> is the cost of observed calls a change would have removed, each action counted once, so it is a <b>minimum</b>, not a forecast. <i>Risk</i> is a rule of thumb from how much evidence there is and what kind of change it is; nothing has been replayed against past calls yet. Real traces without recorded cost show $0: the coverage card says so.</p>
+        <p><b>How to read the numbers</b>: <i>candidate cost</i> is the recorded cost of calls a change could remove, each action counted once. It is <b>not a savings forecast</b>: no change has been replay-tested, so verified savings show as <i>not measured</i>. <i>Risk</i> is a rule of thumb from how much evidence there is and what kind of change it is; nothing has been replayed against past calls yet. When traces record no cost, spend shows as unavailable; the coverage card says how much was recorded.</p>
       </details>
       <div class="row">
         <div class="field">
@@ -839,34 +846,39 @@ hf auth login</pre>
   </div>
 
   <div id="finopsReport" style="display:none">
-    <h2><span class="idx">01</span>Overview <span style="font-size:12px;color:var(--faint)">— where the money goes and how much of it was avoidable</span></h2>
+    <h2><span class="idx">01</span>Overview <span style="font-size:12px;color:var(--faint)">— where the money goes, and the candidate cost findings point at</span></h2>
     <p class="fo-headline" id="finopsHeadline"></p>
     <p class="takeaway" id="finopsTakeaway"></p>
     <div class="stats explained" id="finopsStats"></div>
     <p class="lede" id="finopsNotes"></p>
     <p class="lede" id="finopsContext" hidden></p>
 
-    <h2><span class="idx">02</span>Agents <span style="font-size:12px;color:var(--faint)">— spend and avoidable spend per agent workflow, most avoidable first</span></h2>
-    <p class="lede">One row per agent workflow. The bar is the workflow's spend; the amber part is what these traces show was avoidable (each action counted once). <i>Cost per run</i> is total spend over runs. Sort by clicking a header.</p>
-    <table id="finopsAgents"><thead><tr><th data-sort="workflow">agent workflow</th><th class="num" data-sort="runs">runs</th><th class="num" data-sort="spend">spend</th><th class="num" data-sort="cost_per_run">cost / run</th><th class="num" data-sort="avoidable">avoidable</th><th class="num" data-sort="avoidable_share">avoidable %</th><th class="num" data-sort="opportunities">findings</th></tr></thead><tbody></tbody></table>
+    <h2><span class="idx">02</span>What to do next <span style="font-size:12px;color:var(--faint)">— the top groups of findings, and the evidence each still needs</span></h2>
+    <p class="lede">Each step says what to check, not what to change: nothing here has been replay-tested.</p>
+    <ol class="fo-next" id="finopsNext"></ol>
 
-    <h2><span class="idx">03</span>Biggest waste <span style="font-size:12px;color:var(--faint)">— the largest avoidable costs, none overlapping</span></h2>
-    <p class="lede">The top savings that make up the headline: each removes calls no other row above it already removes. <i>Risk</i> is a rule of thumb: evidence size and kind of change.</p>
-    <table id="finopsWaste"><thead><tr><th>#</th><th>change</th><th>where</th><th class="num">avoidable</th><th>risk</th><th>evidence</th></tr></thead><tbody></tbody></table>
+    <h2><span class="idx">03</span>Agents <span style="font-size:12px;color:var(--faint)">— spend and candidate cost per agent workflow, largest candidate first</span></h2>
+    <p class="lede">One row per agent workflow. The bar is the workflow's spend; the amber part is the candidate cost: calls the findings could remove (each action counted once), not a measured saving. <i>Cost per run</i> is total spend over runs. Sort by clicking a header.</p>
+    <table id="finopsAgents"><thead><tr><th data-sort="workflow">agent workflow</th><th class="num" data-sort="runs">runs</th><th class="num" data-sort="spend">spend</th><th class="num" data-sort="cost_per_run">cost / run</th><th class="num" data-sort="avoidable">candidate</th><th class="num" data-sort="avoidable_share">candidate %</th><th class="num" data-sort="opportunities">findings</th></tr></thead><tbody></tbody></table>
 
-    <h2><span class="idx">04</span>Costliest actions <span style="font-size:12px;color:var(--faint)">— per action: cost spread, consistency, when it is predictable, best saving</span></h2>
-    <p class="lede">The most expensive actions across all agents. <i>p50</i> is the typical call, <i>p95</i> the priciest 5%. <i>Consistency</i>: same input &rarr; same output, over inputs seen more than once. <i>Predictable when</i> lists the deciding input field or the regions (input values where a simple rule gives the answer). <i>Best saving</i> is the largest finding on that action.</p>
-    <table id="finopsActions"><thead><tr><th>action</th><th class="num">calls</th><th class="num">spend</th><th class="num">avg · p50 · p95</th><th class="num">consistency</th><th>predictable when</th><th>model</th><th>best saving</th></tr></thead><tbody></tbody></table>
+    <h2><span class="idx">04</span>Candidate reductions <span style="font-size:12px;color:var(--faint)">— the largest candidate costs, none overlapping</span></h2>
+    <p class="lede">The findings that make up the headline candidate cost: each removes calls no other row above it already removes. <i>Risk</i> is a rule of thumb: evidence size and kind of change.</p>
+    <table id="finopsWaste"><thead><tr><th>#</th><th>change</th><th>where</th><th class="num">candidate cost</th><th>risk</th><th>evidence</th></tr></thead><tbody></tbody></table>
+
+    <h2><span class="idx">05</span>Cost hotspots <span style="font-size:12px;color:var(--faint)">— expensive isn't necessarily removable</span></h2>
+    <p class="lede">The most expensive actions across all agents; a high cost here is where to look, not a saving. <i>p50</i> is the typical call, <i>p95</i> the priciest 5%. <i>Consistency</i>: same input &rarr; same output, over inputs seen more than once; <i>n/a</i> when the trace records only part of the input (an LLM call also sees the whole conversation). <i>Predictable when</i> lists the deciding input field or the regions (input values where a simple rule gives the answer). <i>Best candidate</i> is the largest finding on that action.</p>
+    <table id="finopsActions"><thead><tr><th>action</th><th class="num">calls</th><th class="num">spend</th><th class="num">avg · p50 · p95</th><th class="num">consistency</th><th>predictable when</th><th>model</th><th>best candidate</th></tr></thead><tbody></tbody></table>
     <p class="hint" id="finopsActionsMore"></p>
 
-    <h2><span class="idx">05</span>Recommendations <span style="font-size:12px;color:var(--faint)">— every finding, by how safe it is to act on</span></h2>
-    <p class="lede"><b>Low observational risk</b>: plenty of evidence and a low-risk kind of change (reuse a result declared read-only, script steps all declared free of side effects, a choice that never varied) &mdash; still not replay-verified. <b>Needs review</b>: thin evidence, side effects not declared, or the change replaces an LLM decision or a step that writes something. <b>Investigate first</b>: the action gives different results for the same input, so fix that before automating it. <b>Replay-verified</b> stays empty until replay against past calls is built. A $ shown in grey overlaps a larger finding and isn't in the headline.</p>
+    <h2><span class="idx">06</span>Recommendations <span style="font-size:12px;color:var(--faint)">— every finding, grouped, by how safe it is to act on</span></h2>
+    <p class="lede"><b>Low observational risk</b>: plenty of evidence and a low-risk kind of change (reuse a result declared read-only, script steps all declared free of side effects, a choice that never varied) &mdash; still not replay-verified. <b>Needs review</b>: thin evidence, side effects not declared, or the change replaces an LLM decision or a step that writes something. <b>Investigate first</b>: the action gives different results for the same input, so fix that before automating it. <b>Replay-verified</b> stays empty until replay against past calls is built. One card per group: findings of one kind that share a step (two chains through the same command) are one opportunity, listed under its largest finding. A $ shown in grey overlaps a larger finding and isn't in the headline.</p>
     <div class="fo-board" id="finopsBoard"></div>
 
-    <h2><span class="idx">06</span>Model mix <span style="font-size:12px;color:var(--faint)">— LLM spend per model</span></h2>
+    <h2><span class="idx">07</span>Model mix <span style="font-size:12px;color:var(--faint)">— LLM spend per model</span></h2>
+    <p class="lede">No other model was tested on these calls, so switching models isn't a recommendation here.</p>
     <table id="finopsModels"><thead><tr><th>model</th><th class="num">calls</th><th class="num">spend</th><th class="num">avg / call</th><th>used by</th></tr></thead><tbody></tbody></table>
 
-    <h2><span class="idx">07</span>Method &amp; limits</h2>
+    <h2><span class="idx">08</span>Method &amp; limits</h2>
     <ul class="lede" id="finopsLimits"></ul>
   </div>
 
@@ -1427,6 +1439,12 @@ pocBtn.addEventListener('click', async () => {
   }
 });
 
+const NEXT_STEP_LABELS = {
+  investigate: 'Investigate',
+  declare: 'Declare side effects',
+  review: 'Review',
+  replay: 'Replay-test',
+};
 const OPPORTUNITY_LABELS = {
   EXTRACT_DETERMINISTIC_SUBSTEP: 'combine into one scripted step',
   CACHE_RESULT: 'cache the result',
@@ -2119,22 +2137,30 @@ function renderFinops(f) {
   const o = f.overview, p = f.projection, c = f.coverage;
   const monthly = v => p && v != null ? ` <span class="hint">≈ ${usd(v * p.factor)}/mo</span>` : '';
   document.getElementById('finopsHeadline').innerHTML = o.spend
-    ? `At least <b class="warn">${usd(o.avoidable)}</b> of <b>${usd(o.spend)}</b> agent spend (${pctOf(o.avoidable, o.spend)}) went to calls these traces show were avoidable${p ? `: about <b class="warn">${usd(p.avoidable)}</b> a month at ${Number(p.runs_per_month).toLocaleString()} runs.` : '.'}`
-    : 'No cost is recorded in these traces, so spend and savings show as $0. The findings below still say what repeats.';
-  const top = f.top_waste[0];
-  document.getElementById('finopsTakeaway').textContent = top
-    ? `Biggest single saving: ${OPPORTUNITY_LABELS[top.type] || top.type} on ${top.title}${top.where ? ` when ${top.where}` : ''} (${top.workflow}), ${usd(top.saving)} observed, risk ${top.risk}. ${usd(o.low_risk_saving)} of the avoidable spend has low observational risk (not replay-verified).`
-    : 'No avoidable spend found: nothing repeated often enough to act on. Larger traces usually show more.';
+    ? `The findings point at <b class="warn">${usd(o.avoidable)}</b> of <b>${usd(o.spend)}</b> recorded agent spend (${pctOf(o.avoidable, o.spend)})${p ? `, about <b class="warn">${usd(p.avoidable)}</b> a month at ${Number(p.runs_per_month).toLocaleString()} runs` : ''}: calls they could remove. A candidate cost, not a saving: nothing has been replay-tested.`
+    : 'No cost is recorded in these traces, so spend is unavailable. The findings below still say what repeats.';
+  const first = f.next_steps[0];
+  document.getElementById('finopsTakeaway').textContent = first
+    ? `First: ${NEXT_STEP_LABELS[first.step].toLowerCase()} for ${first.title} (${first.workflow}), a candidate to ${OPPORTUNITY_LABELS[first.type] || first.type}. See section 02.`
+    : 'No candidate found with this evidence: nothing repeated often enough to act on. Larger traces usually show more.';
   document.getElementById('finopsStats').innerHTML =
-    statCardExplained(usd(o.spend), 'agent spend', `observed in ${o.calls.toLocaleString()} calls over ${o.runs} runs of ${o.workflows} workflow${o.workflows === 1 ? '' : 's'}; ${usd(f.overview.llm_spend)} of it on LLM calls.${monthly(o.spend)}`) +
-    statCardExplained(`${usd(o.avoidable)} <span style="font-size:14px">(${pctOf(o.avoidable, o.spend)})</span>`, 'avoidable, at least', `the cost of observed calls ${o.counted_opportunities} non-overlapping findings would have removed. A minimum: overlapping and unproven savings are left out.${monthly(o.avoidable)}`) +
-    statCardExplained(usd(o.low_risk_saving), 'low observational risk', `the part of the avoidable spend whose findings have plenty of evidence and a low-risk kind of change. Not replay-verified.${monthly(o.low_risk_saving)}`) +
-    statCardExplained(o.opportunities, 'findings', `${f.risk_totals.low.count} low observational risk, ${f.risk_totals.medium.count} need review, ${f.risk_totals.high.count} to investigate first (section 05).`) +
-    statCardExplained(`${pctOf(c.llm_calls_with_cost, c.llm_calls)} · ${pctOf(c.calls_with_repeated_input, c.calls)}`, 'data coverage', `LLM calls with a recorded cost · calls whose input was seen more than once. Savings can only be measured on calls with cost, and most findings need repeated inputs.`) +
+    statCardExplained(o.spend ? usd(o.spend) : 'unavailable', 'recorded spend', `in ${o.calls.toLocaleString()} calls over ${o.runs} runs of ${o.workflows} workflow${o.workflows === 1 ? '' : 's'}; ${usd(f.overview.llm_spend)} of it on LLM calls. Only what these traces record, not a bill.${monthly(o.spend)}`) +
+    statCardExplained(`${usd(o.avoidable)} <span style="font-size:14px">(${pctOf(o.avoidable, o.spend)})</span>`, 'candidate cost, unverified', `the recorded cost of calls ${o.counted_opportunities} non-overlapping findings could remove, if a replacement gives the same results. Not a forecast: replacement overhead isn't counted. ${usd(o.low_risk_saving)} of it has low observational risk.${monthly(o.avoidable)}`) +
+    statCardExplained('not measured', 'verified savings', 'no change has been replayed against past calls or tried in production, so no saving is measured yet. Not the same as $0.') +
+    statCardExplained(`${o.groups} <span style="font-size:14px">groups</span>`, 'findings', `${o.opportunities} findings, grouped where they share a step. ${f.risk_totals.low.count} low observational risk, ${f.risk_totals.medium.count} need review, ${f.risk_totals.high.count} to investigate first (section 06).`) +
+    statCardExplained(`${pctOf(c.llm_calls_with_cost, c.llm_calls)} · ${pctOf(c.calls_with_repeated_input, c.calls)}`, 'data coverage', `of ${c.llm_calls.toLocaleString()} LLM calls, the share with a recorded cost · of all ${c.calls.toLocaleString()} calls, the share whose input was seen more than once. Counts, not confidence levels.`) +
     (p ? statCardExplained(usd(p.spend), 'monthly projection', `spend at ${Number(p.runs_per_month).toLocaleString()} runs a month, from the observed cost per run (${p.factor.toFixed(1)}× this data). Assumes the same mix of agents.`) : '');
   document.getElementById('finopsNotes').textContent = f.notes;
   contextNote(document.getElementById('finopsContext'), f.context,
     f.context ? Object.values(f.context.hidden_by_context).flatMap(Object.values).reduce((a, b) => a + b, 0) : 0);
+
+  document.getElementById('finopsNext').innerHTML = f.next_steps.map(n => `
+    <li class="${n.step}">
+      <span class="step">${esc(NEXT_STEP_LABELS[n.step])}</span>${riskPill(n.risk)}${approvalPill(n)}
+      <span class="t">${esc(OPPORTUNITY_LABELS[n.type] || n.type)} on <code>${esc(n.title)}</code>${n.where ? ` when ${esc(n.where)}` : ''}</span>
+      <span class="hint">${esc(n.workflow)} · ${n.saving ? `${usd(n.saving)} candidate` : 'no direct saving'} · seen ${n.observations} times${n.related ? ` · ${n.related} related finding${n.related === 1 ? '' : 's'}` : ''}</span>
+      <div class="do">${esc(n.do)} <span class="hint">Why: ${n.risk_reasons.map(esc).join('; ')}.</span></div>
+    </li>`).join('') || '<li>No candidate found with this evidence.</li>';
 
   renderFinopsAgents(f);
 
@@ -2146,14 +2172,14 @@ function renderFinops(f) {
       <td class="num">${usd(w.saving)}${monthly(w.saving)}</td>
       <td>${riskPill(w.risk)}${approvalPill(w)}<div class="hint">${w.risk_reasons.map(esc).join('; ')}</div></td>
       <td class="hint">${esc(w.evidence)} · evidence ${w.evidence_strength}</td>
-    </tr>`).join('') || '<tr><td colspan="6" class="hint">Nothing avoidable found.</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="6" class="hint">No candidate found with this evidence.</td></tr>';
 
   const totalSpend = o.spend || 1;
   document.getElementById('finopsActions').tBodies[0].innerHTML = f.actions.map(a => {
-    const cons = a.consistency.rate != null ? `${Math.round(a.consistency.rate * 100)}% <span class="hint">${a.consistency.repeated_inputs} repeated</span>` : '<span class="hint">no repeats</span>';
+    const cons = !a.input_recorded ? '<span class="hint">n/a: input not fully recorded</span>' : a.consistency.rate != null ? `${Math.round(a.consistency.rate * 100)}% <span class="hint">${a.consistency.repeated_inputs} repeated</span>` : '<span class="hint">no repeats</span>';
     const when = a.regions.length
       ? a.regions.map(r => `<code>${esc(r.where)}</code> <span class="hint">${esc(r.rule_text)} (${Math.round(r.rule_rate * 100)}% vs ${Math.round(r.rest_rate * 100)}%)</span>`).join('<br>')
-      : a.deciding_field ? `decided by <code>${esc(a.deciding_field)}</code>` : a.hidden_state ? '<span class="bad">varies for the same input</span>' : '—';
+      : a.deciding_field ? `decided by <code>${esc(a.deciding_field)}</code>` : a.hidden_state ? '<span class="bad">varies for the same input</span>' : !a.input_recorded ? '<span class="hint">input not fully recorded</span>' : '—';
     const best = a.best ? `${esc(OPPORTUNITY_LABELS[a.best.type] || a.best.type)} <span class="s">${usd(a.best.saving)}</span> ${riskPill(a.best.risk)}` : '—';
     return `
     <tr>
@@ -2171,12 +2197,18 @@ function renderFinops(f) {
     ? `Showing the ${f.actions.length} costliest of ${f.num_actions} actions.` : '';
 
   const cols = [...Object.entries(f.risk_labels), ['verified', 'Replay-verified']];
+  // one card per group, under its largest finding's risk
+  const groups = new Map();
+  for (const x of f.opportunities) {
+    if (!groups.has(x.group)) groups.set(x.group, { lead: x, related: [] });
+    else groups.get(x.group).related.push(x);
+  }
   document.getElementById('finopsBoard').innerHTML = cols.map(([key, label]) => {
-    const items = key === 'verified' ? [] : f.opportunities.filter(x => x.risk === key);
+    const items = key === 'verified' ? [] : [...groups.values()].filter(g => g.lead.risk === key).map(g => ({ ...g.lead, related: g.related }));
     const shown = items.slice(0, 8);
     const sum = key === 'verified'
       ? 'Replay against past calls is not built yet: nothing is verified.'
-      : `${items.length} finding${items.length === 1 ? '' : 's'}${f.risk_totals[key] ? ` · ${usd(f.risk_totals[key].saving)} counted` : ''}`;
+      : `${items.length} group${items.length === 1 ? '' : 's'} · ${f.risk_totals[key].count} finding${f.risk_totals[key].count === 1 ? '' : 's'} · ${usd(f.risk_totals[key].saving)} counted`;
     return `<div class="fo-col"><h3>${esc(label)}</h3><div class="colsum">${sum}</div>${shown.map(x => `
       <div class="fo-card">
         ${riskPill(x.risk)}${approvalPill(x)} <span>${esc(OPPORTUNITY_LABELS[x.type] || x.type)}</span>
@@ -2184,6 +2216,7 @@ function renderFinops(f) {
         <div>${esc(x.action)}</div>
         <div style="margin-top:4px">${x.saving ? `<span class="${x.counted ? 's' : 'hint'}">${usd(x.saving)}</span>${x.counted ? '' : ' <span class="hint">overlaps a larger finding</span>'}` : '<span class="hint">no direct saving</span>'} · evidence ${x.evidence_strength} (${x.observations})</div>
         <div class="hint">${x.risk_reasons.map(esc).join('; ')} · ${esc(x.validation)}</div>
+        ${x.related.length ? `<details><summary class="hint">+ ${x.related.length} related finding${x.related.length === 1 ? '' : 's'}</summary>${x.related.map(r => `<div class="hint">${esc(r.title)}${r.saving ? ` · ${usd(r.saving)}${r.counted ? '' : ' (overlaps, not in headline)'}` : ''} · ${esc(r.risk)}</div>`).join('')}</details>` : ''}
       </div>`).join('')}${items.length > shown.length ? `<div class="hint">+ ${items.length - shown.length} more</div>` : ''}</div>`;
   }).join('');
 
@@ -2197,8 +2230,9 @@ function renderFinops(f) {
     </tr>`).join('') || '<tr><td colspan="5" class="hint">No LLM calls (no model recorded).</td></tr>';
 
   document.getElementById('finopsLimits').innerHTML = [
-    '<b>Avoidable is a minimum.</b> It sums the observed cost of calls each finding would have removed, taking the largest first and skipping any finding that touches an action already counted (a cached call inside a scripted sequence counts once).',
-    '<b>Risk is a heuristic, not a test.</b> Low: 10+ identical read-only calls, or an LLM choice that never varied over 20+ calls. Medium: less evidence, a replaced LLM decision, or a script that repeats writes. High: the action gives different results for the same input.',
+    '<b>Candidate cost is not a savings forecast.</b> It sums the recorded cost of calls each finding could remove, taking the largest first and skipping any finding that touches an action already counted (a cached call inside a scripted sequence counts once). It assumes the replacement removes those calls without changing outcomes; replay and replacement overhead are not measured.',
+    '<b>Unknown side effects are not read-only.</b> A step counts as safe to repeat or cache only when the trace or your answers declare it free of side effects.',
+    '<b>Risk is a heuristic, not a test.</b> Low: 10+ identical calls declared read-only, an LLM choice that never varied over 20+ calls, or a sequence seen 20+ times whose steps are all declared free of side effects. Medium: less evidence, undeclared side effects, a replaced LLM decision, or a script that repeats writes. High: the action gives different results for the same, fully recorded input.',
     '<b>Not built yet: replay.</b> Running a proposed rule or cache over past calls to measure how often it matches is the next step; until then no saving is verified.',
     '<b>No dates in traces.</b> Monthly figures are a projection from runs per month, and assume the observed mix of agents.',
     `<b>Outputs compared as</b> ${esc(f.output_match)}: set with "Compare outputs".`,
