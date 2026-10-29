@@ -39,8 +39,9 @@ class WorkflowContext(BaseModel):
     read_only_operations: list[str] = Field(default_factory=list)
     allowed_optimizations: list[Literal[OPTIMIZATIONS]] | None = None  # None: all
     requires_human_approval: bool = False
-    # recorded for the report; the optimizer doesn't use it yet
+    # recorded for the report; the optimizer doesn't use them yet
     priority: Literal["cost", "speed", "quality"] | None = None
+    model: str | None = None  # the LLM the agent runs on, e.g. "GLM-4.6"
 
     @model_validator(mode="after")
     def _no_operation_in_both(self) -> WorkflowContext:

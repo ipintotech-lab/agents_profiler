@@ -33,9 +33,9 @@ def test_parse_rejects_bad_input_with_a_reason():
         parse_context(json.dumps({"workflows": {"*": {"failure_impact": "huge"}}}))
     with pytest.raises(ValueError, match="both"):
         parse_context(json.dumps({"workflows": {"*": {"side_effect_operations": ["x"], "read_only_operations": ["x"]}}}))
-    context = parse_context(json.dumps({"workflows": {"*": {"failure_impact": "low"}, "wf": {"failure_impact": "high"}}}))
+    context = parse_context(json.dumps({"workflows": {"*": {"failure_impact": "low"}, "wf": {"failure_impact": "high", "model": "GLM-4.6"}}}))
     assert (context.source, context.status) == ("user_declared", "unverified")
-    assert context.for_workflow("wf").failure_impact == "high"
+    assert (context.for_workflow("wf").failure_impact, context.for_workflow("wf").model) == ("high", "GLM-4.6")
     assert context.for_workflow("other").failure_impact == "low"
 
 
